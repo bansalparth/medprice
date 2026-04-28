@@ -59,7 +59,7 @@ async function runOnce() {
       // a single bad scrape can wedge the entire run.
       const PER_MEDICINE_TIMEOUT_MS = 90_000;
       const listings = await Promise.race([
-        scrapeAll(medicine.name),
+        scrapeAll(medicine.name, null, { includeBrowser: true }),
         new Promise<never>((_, rej) =>
           setTimeout(
             () => rej(new Error(`Timeout after ${PER_MEDICINE_TIMEOUT_MS}ms`)),

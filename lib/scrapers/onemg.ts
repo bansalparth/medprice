@@ -1,149 +1,105 @@
-import { newPage, jitter, safeEvaluate } from "./browser";
+import { fetchJson, parsePrice } from "./http";
 import type { ScrapedListing } from "./types";
+
+interface OneMgResult {
+  id: string | number;
+  name?: string;
+  type?: string;
+  available?: boolean;
+  url?: string;
+  label?: string;
+  prices?: {
+    mrp?: string | number;
+    discounted_price?: string | number | null;
+    discount?: string | null;
+  };
+  not_available_tag?: { text?: string } | null;
+  cta?: { text?: string } | null;
+  manufacturer?: string;
+}
+
+interface OneMgResponse {
+  is_success?: boolean;
+  data?: { search_results?: OneMgResult[] };
+}
+
+const PINCODE_TO_CITY: Record<string, string> = {
+  "400": "Mumbai",
+  "560": "Bangalore",
+  "110": "Delhi",
+  "600": "Chennai",
+  "700": "Kolkata",
+  "500": "Hyderabad",
+  "411": "Pune",
+};
+
+function cityFor(pincode?: string | null): string {
+  if (!pincode) return "Mumbai";
+  const prefix = pincode.slice(0, 3);
+  return PINCODE_TO_CITY[prefix] ?? "Mumbai";
+}
 
 export async function scrape(
   query: string,
   pincode?: string | null
 ): Promise<ScrapedListing[]> {
-  // 1mg keeps the active pincode in a `pincode` cookie; setting it before
-  // navigation makes search and product cards reflect that locality.
-  const handle = await newPage({
-    cookies: pincode
-      ? [{ name: "pincode", value: pincode, domain: ".1mg.com" }]
-      : undefined,
+  const city = cityFor(pincode);
+  const url =
+    "https://www.1mg.com/pwa-api/api/v4/search/all" +
+    `?q=${encodeURIComponent(query)}` +
+    `&city=${encodeURIComponent(city)}` +
+    "&types=sku&page=1&per_page=10";
+
+  const json = await fetchJson<OneMgResponse>(url, {
+    headers: {
+      referer: "https://www.1mg.com/",
+      "x-city": city,
+    },
+    timeoutMs: 8000,
   });
-  try {
-    const url = `https://www.1mg.com/search/all?name=${encodeURIComponent(query)}`;
-    await handle.page.goto(url, { waitUntil: "domcontentloaded" });
-    await jitter(1500, 2500);
 
-    await handle.page
-      .waitForSelector('[class*="SearchResultContainer__cardContainer"]', {
-        timeout: 12000,
-      })
-      .catch(() => {});
+  const results = json?.data?.search_results ?? [];
 
-    // Scroll to trigger lazy-load
-    await handle.page.evaluate(() => window.scrollTo(0, 600));
-    await jitter(800, 1200);
+  return results
+    .filter((r) => r.type === "drug" || r.type === "otc")
+    .slice(0, 6)
+    .map((r) => {
+      const mrp = parsePrice(r.prices?.mrp);
+      const sellingPrice = parsePrice(r.prices?.discounted_price) ?? mrp;
+      const discountStr = r.prices?.discount;
+      const discountPercent = discountStr
+        ? parseInt(String(discountStr).replace(/[^0-9]/g, "")) || undefined
+        : mrp && sellingPrice && mrp > sellingPrice
+        ? Math.round(((mrp - sellingPrice) / mrp) * 100)
+        : undefined;
 
-    const results = await safeEvaluate(handle.page, () => {
-      const parsePrice = (s: string | null | undefined): number | undefined => {
-        if (!s) return undefined;
-        const n = parseFloat(s.replace(/[^0-9.]/g, ""));
-        return isNaN(n) || n <= 0 ? undefined : n;
-      };
+      const path = r.url ?? "";
+      const productUrl = path.startsWith("http")
+        ? path
+        : `https://www.1mg.com${path}`;
 
-      const cards = Array.from(
-        document.querySelectorAll('[class*="SearchResultContainer__cardContainer"]')
-      );
-
-      return cards.slice(0, 6).map((card) => {
-        const text = (sels: string[]): string | undefined => {
-          for (const s of sels) {
-            const el = card.querySelector(s);
-            const t = el?.textContent?.trim();
-            if (t) return t;
-          }
-          return undefined;
-        };
-
-        // Name lives in the dedicated tile container
-        const name =
-          text([
-            '[class*="VerticalProductTile__productName"]',
-            '[class*="VerticalProductTile__product"] .smallSemiBold',
-            '.smallSemiBold.textPrimary',
-            "h3",
-          ]) ?? "";
-
-        // Pack size — small grey text under name
-        const pack = text(['[class*="VerticalProductTile__packSize"]', '.xSmallRegular']);
-
-        const sellingPriceRaw = text(['span.l5Medium', '[class*="textPrimary"][class*="l5Medium"]']);
-        // The text may include "Discounted Price:" prefix from a visuallyHidden span
-        const sellingPrice = parsePrice(sellingPriceRaw);
-
-        const mrpRaw = text(['strike', '[class*="Price__marginLeft"]']);
-        const mrp = parsePrice(mrpRaw);
-
-        const discountRaw = text(['[class*="successColor"]']);
-        const discountPercent = discountRaw
-          ? parseInt(discountRaw.replace(/[^0-9]/g, "")) || undefined
-          : undefined;
-
-        const link = (card.querySelector("a") as HTMLAnchorElement | null)?.href ?? "";
-
-        // Detect "not buyable" states. 1mg shows these in several ways:
-        //   1. Text content: "OUT OF STOCK", "Sold Out", "Notify Me", etc.
-        //   2. Image badges: a discontinued/not-for-sale tag rendered as an
-        //      <img> with alt="Discontinued" and src ending in
-        //      "not_for_sale_tag.svg" (textContent does NOT include alt text).
-        //   3. Class names containing OutOfStock / NotForSale / Discontinued.
-        const cardText = (card.textContent ?? "").toLowerCase();
-        const UNAVAILABLE_PATTERNS = [
-          "out of stock",
-          "discontinued",
-          "not for online sale",
-          "not available for online sale",
-          "currently unavailable",
-          "sold out",
-          "notify me",
-        ];
-        const hasUnavailableText = UNAVAILABLE_PATTERNS.some((p) =>
-          cardText.includes(p)
+      // 1mg's `available` flag is the source of truth; cross-check against
+      // not_available_tag (e.g. "Discontinued") and cta text ("Notify Me").
+      const notAvailTag = (r.not_available_tag?.text ?? "").toLowerCase();
+      const ctaText = (r.cta?.text ?? "").toLowerCase();
+      const flaggedUnavailable =
+        /out of stock|discontinued|notify|sold out|not for sale|unavailable/i.test(
+          notAvailTag + " " + ctaText
         );
+      const hasPrice = sellingPrice != null || mrp != null;
+      const inStock = !!r.available && !flaggedUnavailable && hasPrice;
 
-        // Scan img alts and srcs — 1mg's discontinued/not-for-sale badge is an SVG.
-        const imgs = Array.from(card.querySelectorAll("img"));
-        const hasUnavailableImage = imgs.some((img) => {
-          const alt = (img.getAttribute("alt") ?? "").toLowerCase();
-          const src = (img.getAttribute("src") ?? "").toLowerCase();
-          if (UNAVAILABLE_PATTERNS.some((p) => alt.includes(p))) return true;
-          if (
-            src.includes("not_for_sale") ||
-            src.includes("notforsale") ||
-            src.includes("out_of_stock") ||
-            src.includes("outofstock") ||
-            src.includes("discontinued") ||
-            src.includes("sold_out") ||
-            src.includes("soldout")
-          ) {
-            return true;
-          }
-          return false;
-        });
-
-        const hasOutOfStockClass = !!card.querySelector(
-          '[class*="OutOfStock"], [class*="out-of-stock"], [class*="NotForSale"], [class*="Discontinued"]'
-        );
-
-        // No price = not buyable. 1mg almost always shows a price for buyable
-        // products; missing price strongly correlates with discontinued/blocked.
-        const hasPrice = sellingPrice != null || mrp != null;
-
-        const inStock =
-          hasPrice && !hasOutOfStockClass && !hasUnavailableText && !hasUnavailableImage;
-
-        return {
-          productName: name,
-          packSize: pack,
-          mrp,
-          sellingPrice,
-          discountPercent:
-            discountPercent ??
-            (mrp && sellingPrice && mrp > sellingPrice
-              ? Math.round(((mrp - sellingPrice) / mrp) * 100)
-              : undefined),
-          inStock,
-          productUrl: link.startsWith("http") ? link : `https://www.1mg.com${link}`,
-          pharmacyName: "1mg",
-        };
-      });
-    });
-
-    return results.filter((r) => r.productName);
-  } finally {
-    await handle.close();
-  }
+      return {
+        productName: r.name ?? "",
+        brandName: undefined,
+        packSize: r.label,
+        mrp,
+        sellingPrice,
+        discountPercent,
+        inStock,
+        productUrl,
+        pharmacyName: "1mg",
+      } satisfies ScrapedListing;
+    })
+    .filter((r) => r.productName);
 }

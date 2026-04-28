@@ -10,7 +10,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// Two-tier cache:
+//   - FRESH: < FRESH_TTL_MS old → serve immediately, no scrape.
+//   - STALE: FRESH..STALE_TTL_MS → serve immediately, refresh in background.
+//   - >STALE_TTL_MS (or none): block on a live scrape.
+const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
+const STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Short-TTL in-memory dedupe so two near-simultaneous requests for the same
 // medicine reuse the same in-flight scrape instead of launching it twice.
@@ -84,15 +89,15 @@ export async function GET(req: NextRequest) {
     ? `${medRow.brandName} ${medRow.dosageForm ?? ""}`.trim()
     : medRow.name;
 
-  // Check cached fresh listings — pincode-aware so different cities don't
-  // collide on the same cache row. Listings without a pincode are reusable
-  // across users (national catalogue entries).
+  // Check cached listings — pincode-aware so different cities don't collide.
+  // We pull anything within the STALE window in one query so we can decide
+  // fresh-vs-stale-vs-miss without a second round trip.
   const cachedMed = await prisma.medicine.findUnique({
     where: { id: medRow.id },
     include: {
       listings: {
         where: {
-          scrapedAt: { gte: new Date(Date.now() - CACHE_TTL_MS) },
+          scrapedAt: { gte: new Date(Date.now() - STALE_TTL_MS) },
           OR: [
             { pincode: pincode ?? undefined },
             { pincode: null },
@@ -105,9 +110,44 @@ export async function GET(req: NextRequest) {
   });
 
   if (cachedMed && cachedMed.listings.length > 0) {
+    const newest = cachedMed.listings.reduce(
+      (max: number, l: any) =>
+        Math.max(max, new Date(l.scrapedAt).getTime()),
+      0
+    );
+    const ageMs = Date.now() - newest;
+
+    if (ageMs < FRESH_TTL_MS) {
+      return NextResponse.json({
+        medicine: enrich(cachedMed, pincode),
+        cached: true,
+        pincode,
+      });
+    }
+
+    // STALE band: serve immediately, kick off a background refresh.
+    // We don't await — Vercel keeps the function alive briefly after the
+    // response is sent (best-effort), and even if it's killed mid-scrape
+    // the next request still gets a fresh result on its turn.
+    const scrapeKey = `${scrapeQuery}::${pincode ?? ""}`;
+    if (!inflight.has(scrapeKey)) {
+      const p = scrapeAll(scrapeQuery, pincode);
+      inflight.set(scrapeKey, p);
+      setTimeout(() => inflight.delete(scrapeKey), INFLIGHT_TTL_MS);
+      void p
+        .then((scraped) =>
+          persistScrapeResults(medRow!, scraped, pincode)
+        )
+        .catch((e) =>
+          console.error("[search] background refresh failed:", e?.message)
+        );
+    }
+
     return NextResponse.json({
       medicine: enrich(cachedMed, pincode),
       cached: true,
+      stale: true,
+      ageMs,
       pincode,
     });
   }
@@ -123,21 +163,6 @@ export async function GET(req: NextRequest) {
   const scraped = await scrapePromise;
 
   if (scraped.length === 0) {
-    if (cachedMed) {
-      const stale = await prisma.medicine.findUnique({
-        where: { id: medRow.id },
-        include: {
-          listings: { orderBy: [{ inStock: "desc" }, { sellingPrice: "asc" }] },
-          saltMappings: { include: { janAushadhiProduct: true } },
-        },
-      });
-      return NextResponse.json({
-        medicine: enrich(stale, pincode),
-        cached: true,
-        stale: true,
-        pincode,
-      });
-    }
     const fullMedEmpty = await prisma.medicine.findUnique({
       where: { id: medRow.id },
       include: {
@@ -153,6 +178,55 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  const { relevantCount } = await persistScrapeResults(medRow, scraped, pincode);
+
+  if (relevantCount === 0) {
+    const fullMedEmpty = await prisma.medicine.findUnique({
+      where: { id: medRow.id },
+      include: {
+        listings: { orderBy: [{ inStock: "desc" }, { sellingPrice: "asc" }] },
+        saltMappings: { include: { janAushadhiProduct: true } },
+      },
+    });
+    return NextResponse.json({
+      medicine: enrich(fullMedEmpty, pincode),
+      cached: false,
+      scraped: [],
+      pincode,
+      message: `No live listings matched the brand "${medRow.brandName ?? medRow.name}". The drug may be out of stock everywhere or our scrapers are being blocked.`,
+    });
+  }
+
+  const fullMed = await prisma.medicine.findUnique({
+    where: { id: medRow.id },
+    include: {
+      listings: { orderBy: [{ inStock: "desc" }, { sellingPrice: "asc" }] },
+      saltMappings: { include: { janAushadhiProduct: true } },
+    },
+  });
+  return NextResponse.json({
+    medicine: enrich(fullMed, pincode),
+    cached: false,
+    pincode,
+  });
+}
+
+/**
+ * Filter raw scrape results down to listings that actually match the
+ * catalog medicine (rejecting cross-sells / wrong strengths / wrong
+ * formulation), then persist the matched listings, refresh price history,
+ * and update the salt → Jan Aushadhi mapping.
+ *
+ * Used by both the live-scrape path and the SWR background refresh.
+ *
+ * Returns the count of listings that survived filtering so the caller can
+ * decide whether to surface a "no match" message.
+ */
+async function persistScrapeResults(
+  medRow: any,
+  scraped: ScrapedListing[],
+  pincode: string | null
+): Promise<{ relevantCount: number }> {
   // FILTER scraped results to ones that actually match what the user picked.
   //
   // Pharmacy search results include cross-sells ("Crocin 650" search returns
@@ -182,15 +256,13 @@ export async function GET(req: NextRequest) {
     return new RegExp(`\\b${esc}\\b`, "i");
   };
 
-  const sourceText = medRow.brandName ?? medRow.name;
+  const sourceText: string = medRow.brandName ?? medRow.name;
   const brandTokens = sourceText
     .toLowerCase()
-    // keep digits, decimals, and word chars; replace everything else with space
     .replace(/[^a-z0-9.\s]/g, " ")
     .split(/\s+/)
-    // drop empty / lone-period / common dosage-form noise
     .filter(
-      (t) =>
+      (t: string) =>
         t.length >= 1 &&
         t !== "." &&
         !["tablet", "capsule", "syrup", "drops", "injection", "cream", "gel"].includes(t)
@@ -315,7 +387,7 @@ export async function GET(req: NextRequest) {
       if (BUNDLE_RE.test(s.productName)) return false;
 
       // 2. Brand tokens must all be present
-      if (!tokenRegexes.every((re) => re.test(s.productName))) return false;
+      if (!tokenRegexes.every((re: RegExp) => re.test(s.productName))) return false;
 
       // 3. If we know the primary strength, the product's strengths (if any
       //    are mentioned) must include ours. If the product lists no strength
@@ -342,23 +414,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (relevantScraped.length === 0) {
-    // Re-fetch with relations so the client gets a well-formed shape even when
-    // there are zero matching scraped listings. enrich() then guarantees the
-    // listings/drugDetail fields the UI expects.
-    const fullMedEmpty = await prisma.medicine.findUnique({
-      where: { id: medRow.id },
-      include: {
-        listings: { orderBy: [{ inStock: "desc" }, { sellingPrice: "asc" }] },
-        saltMappings: { include: { janAushadhiProduct: true } },
-      },
-    });
-    return NextResponse.json({
-      medicine: enrich(fullMedEmpty, pincode),
-      cached: false,
-      scraped: [],
-      pincode,
-      message: `No live listings matched the brand "${medRow.brandName ?? medRow.name}". The drug may be out of stock everywhere or our scrapers are being blocked.`,
-    });
+    return { relevantCount: 0 };
   }
 
   // Update saltComposition. For catalog entries we trust the curated value
@@ -472,19 +528,7 @@ export async function GET(req: NextRequest) {
       .catch(() => {});
   }
 
-  const fullMed = await prisma.medicine.findUnique({
-    where: { id: medRow.id },
-    include: {
-      listings: { orderBy: [{ inStock: "desc" }, { sellingPrice: "asc" }] },
-      saltMappings: { include: { janAushadhiProduct: true } },
-    },
-  });
-
-  return NextResponse.json({
-    medicine: enrich(fullMed, pincode),
-    cached: false,
-    pincode,
-  });
+  return { relevantCount: relevantScraped.length };
 }
 
 /**
