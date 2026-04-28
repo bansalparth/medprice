@@ -54,7 +54,19 @@ async function runOnce() {
     });
 
     try {
-      const listings = await scrapeAll(medicine.name);
+      // Hard wall-clock cap: if any pharmacy hangs (anti-bot challenge,
+      // network stall), abandon this medicine and move on. Without this
+      // a single bad scrape can wedge the entire run.
+      const PER_MEDICINE_TIMEOUT_MS = 90_000;
+      const listings = await Promise.race([
+        scrapeAll(medicine.name),
+        new Promise<never>((_, rej) =>
+          setTimeout(
+            () => rej(new Error(`Timeout after ${PER_MEDICINE_TIMEOUT_MS}ms`)),
+            PER_MEDICINE_TIMEOUT_MS
+          )
+        ),
+      ]);
 
       await prisma.pharmacyListing.deleteMany({
         where: { medicineId: medicine.id },
