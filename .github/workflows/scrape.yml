@@ -1,0 +1,52 @@
+name: Daily price scrape
+
+on:
+  schedule:
+    # 02:00 UTC = 07:30 IST. Pharmacies are warm; user searches are low.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max medicines to scrape this run"
+        required: false
+        default: "100"
+
+# Don't run two scrapes at once — they'd race on PharmacyListing rows.
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      SCRAPE_LIMIT: ${{ github.event.inputs.limit || '100' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run daily price scrape
+        run: npm run worker -- --once
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Scrape run summary" >> $GITHUB_STEP_SUMMARY
+          echo "Limit: $SCRAPE_LIMIT medicines" >> $GITHUB_STEP_SUMMARY
+          echo "Trigger: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY

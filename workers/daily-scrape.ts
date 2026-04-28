@@ -8,14 +8,45 @@ const prisma = new PrismaClient();
 async function runOnce() {
   console.log("[CRON] Starting daily scrape...");
 
-  const medicines = await prisma.medicine.findMany({
-    select: { id: true, name: true },
-  });
+  // Cap how many medicines we refresh per run. Free GH Actions runs are
+  // capped at ~6 hours; even with the worker's 2s pacing each medicine takes
+  // ~10s, so 100 medicines ≈ 17 minutes is a safe default.
+  const LIMIT = parseInt(process.env.SCRAPE_LIMIT ?? "100", 10);
+
+  // Priority order:
+  //   1. Most-searched medicines (from SearchLog) — high user value
+  //   2. Catalog medicines whose listings are oldest / missing
+  //   3. Tie-break by name
+  const ranked = await prisma.$queryRaw<Array<{ id: string; name: string }>>`
+    SELECT m.id, m.name
+    FROM "Medicine" m
+    LEFT JOIN (
+      SELECT "medicineId", COUNT(*)::int AS hits
+      FROM "SearchLog"
+      WHERE "createdAt" > NOW() - INTERVAL '30 days'
+      GROUP BY "medicineId"
+    ) sl ON sl."medicineId" = m.id
+    LEFT JOIN (
+      SELECT "medicineId", MAX("scrapedAt") AS last_scrape
+      FROM "PharmacyListing"
+      GROUP BY "medicineId"
+    ) pl ON pl."medicineId" = m.id
+    WHERE m."isCatalog" = true
+    ORDER BY
+      COALESCE(sl.hits, 0) DESC,
+      pl.last_scrape ASC NULLS FIRST,
+      m.name ASC
+    LIMIT ${LIMIT}
+  `;
+
+  const medicines = ranked;
 
   if (medicines.length === 0) {
     console.log("[CRON] No medicines in database yet. Nothing to refresh.");
     return;
   }
+
+  console.log(`[CRON] Scraping ${medicines.length} medicines (LIMIT=${LIMIT})`);
 
   for (const medicine of medicines) {
     const job = await prisma.scrapeJob.create({
