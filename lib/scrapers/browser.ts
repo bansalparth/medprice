@@ -1,4 +1,9 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import {
+  chromium as playwrightChromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright-core";
 
 /**
  * tsx/esbuild emits __name(fn, "name") wrappers inside compiled functions.
@@ -27,24 +32,50 @@ export interface PageHandle {
   close: () => Promise<void>;
 }
 
+// Vercel / AWS Lambda runs us on Linux; we ship `@sparticuz/chromium-min`
+// which downloads a stripped Chromium binary at cold start. Locally we reuse
+// the system Chromium installed via `npx playwright install chromium`.
+const IS_SERVERLESS = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+
+// Chromium binary version that ships with @sparticuz/chromium-min v148.
+// Update the URL when bumping chromium-min.
+const SPARTICUZ_PACK_URL =
+  "https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.x64.tar";
+
+async function buildLaunchOptions() {
+  const baseArgs = [
+    "--no-sandbox",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage",
+  ];
+
+  if (!IS_SERVERLESS) {
+    return { headless: true, args: baseArgs };
+  }
+
+  // Lazy-import so non-serverless environments never load the AWS-flavored module
+  const sparticuz = (await import("@sparticuz/chromium-min")).default;
+  const executablePath = await sparticuz.executablePath(SPARTICUZ_PACK_URL);
+
+  return {
+    headless: true,
+    args: [...sparticuz.args, ...baseArgs],
+    executablePath,
+  };
+}
+
 // Shared browser singleton — launching Chromium 6× per search was the dominant
 // cost. We reuse one browser process and create ephemeral contexts per scrape.
 let _sharedBrowser: Promise<Browser> | null = null;
 function getSharedBrowser(): Promise<Browser> {
   if (!_sharedBrowser) {
-    _sharedBrowser = chromium
-      .launch({
-        headless: true,
-        args: [
-          "--no-sandbox",
-          "--disable-blink-features=AutomationControlled",
-          "--disable-dev-shm-usage",
-        ],
-      })
-      .catch((err) => {
-        _sharedBrowser = null;
-        throw err;
-      });
+    _sharedBrowser = (async () => {
+      const opts = await buildLaunchOptions();
+      return playwrightChromium.launch(opts);
+    })().catch((err) => {
+      _sharedBrowser = null;
+      throw err;
+    });
   }
   return _sharedBrowser;
 }

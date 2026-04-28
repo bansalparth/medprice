@@ -35,13 +35,46 @@ export const PINCODE_AWARE_PHARMACIES = new Set([
   "apollo",
 ]);
 
+// On Vercel, the function has a hard 60s ceiling and ~1GB RAM. Spinning up
+// 6 chromium contexts in parallel risks OOM and timeouts. We cap concurrency
+// to SERVERLESS_SCRAPE_LIMIT (default 3) and process in waves. Locally we run
+// all six at once.
+const IS_SERVERLESS =
+  !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+const SERVERLESS_SCRAPE_LIMIT = parseInt(
+  process.env.SERVERLESS_SCRAPE_LIMIT ?? "3",
+  10
+);
+
+async function runWithConcurrency<T>(
+  tasks: Array<() => Promise<T>>,
+  limit: number
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= tasks.length) return;
+      try {
+        results[i] = { status: "fulfilled", value: await tasks[i]() };
+      } catch (err) {
+        results[i] = { status: "rejected", reason: err };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 export async function scrapeAll(
   query: string,
   pincode?: string | null
 ): Promise<ScrapedListing[]> {
-  const results = await Promise.allSettled(
-    SCRAPERS.map((s) => s.fn(query, pincode))
-  );
+  const tasks = SCRAPERS.map((s) => () => s.fn(query, pincode));
+  const results = IS_SERVERLESS
+    ? await runWithConcurrency(tasks, SERVERLESS_SCRAPE_LIMIT)
+    : await Promise.allSettled(tasks.map((t) => t()));
 
   const successful: ScrapedListing[] = [];
   results.forEach((result, i) => {

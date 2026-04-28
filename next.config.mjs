@@ -2,7 +2,12 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    serverComponentsExternalPackages: ["playwright", "pdf-parse", "@prisma/client"],
+    serverComponentsExternalPackages: [
+      "playwright-core",
+      "@sparticuz/chromium-min",
+      "pdf-parse",
+      "@prisma/client",
+    ],
   },
   images: {
     remotePatterns: [
