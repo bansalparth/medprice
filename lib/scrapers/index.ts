@@ -46,6 +46,23 @@ const SERVERLESS_SCRAPE_LIMIT = parseInt(
   10
 );
 
+// Hard ceiling per pharmacy — if one site hangs (cloudflare challenge,
+// network stall, anti-bot), fail it fast so the rest of the scrape
+// completes within the function's 60s wall-clock budget.
+const PER_SCRAPER_TIMEOUT_MS = parseInt(
+  process.env.PER_SCRAPER_TIMEOUT_MS ?? "18000",
+  10
+);
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race<T>([
+    p,
+    new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 async function runWithConcurrency<T>(
   tasks: Array<() => Promise<T>>,
   limit: number
@@ -71,7 +88,11 @@ export async function scrapeAll(
   query: string,
   pincode?: string | null
 ): Promise<ScrapedListing[]> {
-  const tasks = SCRAPERS.map((s) => () => s.fn(query, pincode));
+  // Wrap every scraper in a per-pharmacy timeout. Without this a single
+  // hung scraper blocks the wave (parallel) or all subsequent ones (sequential).
+  const tasks = SCRAPERS.map(
+    (s) => () => withTimeout(s.fn(query, pincode), PER_SCRAPER_TIMEOUT_MS, s.name)
+  );
   const results = IS_SERVERLESS
     ? await runWithConcurrency(tasks, SERVERLESS_SCRAPE_LIMIT)
     : await Promise.allSettled(tasks.map((t) => t()));

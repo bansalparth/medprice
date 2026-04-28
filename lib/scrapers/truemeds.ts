@@ -1,12 +1,22 @@
 import { newPage, jitter, safeEvaluate } from "./browser";
 import type { ScrapedListing } from "./types";
 
+/**
+ * Truemeds search:
+ *   - URL is path-based: /search/{query} (NOT ?searchQuery=...)
+ *   - Markup uses styled-components (hashed class names), so we anchor
+ *     extraction on stable structural cues:
+ *       - product image with alt = "{Product Name}"
+ *       - sibling spans for manufacturer / pack / "₹{price}" / "MRP ₹{mrp}" /
+ *         "{N}% OFF"
+ *       - "Out of Stock" or "Add To Cart" buttons indicate stock
+ *   - No anchor-tag link to the PDP from the search card; we synthesise the
+ *     URL by URL-encoding the product name (truemeds is forgiving here).
+ */
 export async function scrape(
   query: string,
   pincode?: string | null
 ): Promise<ScrapedListing[]> {
-  // Truemeds reads pincode from localStorage (`tm_pincode`) and a cookie of the
-  // same name. National pricing applies, but stock badges respect this.
   const handle = await newPage({
     cookies: pincode
       ? [{ name: "tm_pincode", value: pincode, domain: ".truemeds.in" }]
@@ -19,13 +29,22 @@ export async function scrape(
       : undefined,
   });
   try {
-    const url = `https://www.truemeds.in/search?searchQuery=${encodeURIComponent(query)}`;
+    const url = `https://www.truemeds.in/search/${encodeURIComponent(query)}`;
     await handle.page.goto(url, { waitUntil: "domcontentloaded" });
-    await jitter(1000, 2000);
+    await jitter(1500, 2500);
 
+    // Wait for at least one product image whose alt looks like a medicine
     await handle.page
-      .waitForSelector(
-        '[class*="product-card"], [class*="ProductCard"], [class*="medicineCard"]',
+      .waitForFunction(
+        () => {
+          const imgs = Array.from(document.querySelectorAll("img[alt]"));
+          return imgs.some((i) =>
+            /Tablet|Capsule|Injection|Syrup|Drops|Cream|Ointment|Powder|Sachet/i.test(
+              (i as HTMLImageElement).alt
+            )
+          );
+        },
+        undefined,
         { timeout: 12000 }
       )
       .catch(() => {});
@@ -37,74 +56,102 @@ export async function scrape(
         return isNaN(n) || n <= 0 ? undefined : n;
       };
 
-      const cardSelectors = [
-        '[class*="ProductCard"]',
-        '[class*="product-card"]',
-        '[class*="medicineCard"]',
-      ];
-      let cards: Element[] = [];
-      for (const sel of cardSelectors) {
-        cards = Array.from(document.querySelectorAll(sel));
-        if (cards.length) break;
+      // Anchor on product images (alt text identifies the SKU)
+      const productImgs = Array.from(
+        document.querySelectorAll("img[alt]")
+      ).filter((i) =>
+        /Tablet|Capsule|Injection|Syrup|Drops|Cream|Ointment|Powder|Sachet/i.test(
+          (i as HTMLImageElement).alt
+        )
+      ) as HTMLImageElement[];
+
+      // For each image walk up until we find a parent that contains MRP + an
+      // Add To Cart / Out of Stock label, AND no other product image (so it's
+      // a single card, not the whole results container).
+      const findCard = (img: HTMLImageElement): HTMLElement | null => {
+        let p: HTMLElement | null = img.parentElement;
+        while (p && p.tagName !== "BODY") {
+          const t = p.textContent ?? "";
+          if (t.includes("MRP") && /Add To Cart|Out of Stock/i.test(t)) {
+            const otherImgs = Array.from(p.querySelectorAll("img[alt]")).filter(
+              (i) =>
+                i !== img &&
+                /Tablet|Capsule|Injection|Syrup|Drops|Cream|Ointment|Powder|Sachet/i.test(
+                  (i as HTMLImageElement).alt
+                )
+            );
+            if (otherImgs.length === 0) return p;
+          }
+          p = p.parentElement;
+        }
+        return null;
+      };
+
+      const seen = new Set<HTMLElement>();
+      const cards: { img: HTMLImageElement; root: HTMLElement }[] = [];
+      for (const img of productImgs.slice(0, 12)) {
+        const root = findCard(img);
+        if (root && !seen.has(root)) {
+          seen.add(root);
+          cards.push({ img, root });
+        }
       }
 
-      return cards.slice(0, 5).map((card) => {
-        const text = (sels: string[]): string | undefined => {
-          for (const s of sels) {
-            const el = card.querySelector(s);
-            const t = el?.textContent?.trim();
-            if (t) return t;
-          }
-          return undefined;
-        };
+      return cards.slice(0, 6).map(({ img, root }) => {
+        const name = img.alt.trim();
 
-        const name =
-          text([
-            '[class*="productName"]',
-            '[class*="ProductName"]',
-            '[class*="product-name"]',
-            "h3",
-            "h2",
-          ]) ?? "";
+        const spans = Array.from(root.querySelectorAll("span"))
+          .map((s) => s.textContent?.trim() ?? "")
+          .filter(Boolean);
 
-        const price = parsePrice(
-          text([
-            '[class*="sellingPrice"]',
-            '[class*="discountedPrice"]',
-            '[class*="price"]',
-          ])
+        // Manufacturer is usually the first non-numeric, non-pack span
+        const manufacturer = spans.find(
+          (s) =>
+            !/^₹|^MRP|^Strip of|^Bottle|^Box of|^Pack|^\d+\s*%/.test(s) &&
+            s.length > 5 &&
+            s.length < 80
         );
-        const mrp = parsePrice(
-          text(['[class*="mrp"]', '[class*="MRP"]', '[class*="strikePrice"]', "del"])
-        );
-        const pack = text([
-          '[class*="packSize"]',
-          '[class*="PackSize"]',
-          '[class*="qty"]',
-        ]);
-        const salt = text([
-          '[class*="salt"]',
-          '[class*="composition"]',
-          '[class*="Salt"]',
-        ]);
 
-        const link =
-          (card.querySelector("a") as HTMLAnchorElement | null)?.href ?? "";
+        const packSize = spans.find((s) =>
+          /^Strip of|^Bottle|^Box of|^Pack|^Sachet|^Vial|^Tube|^Tin|^Jar|of\s+\d+\s+Units/i.test(
+            s
+          )
+        );
+
+        // Selling price: span starting with ₹ but not "MRP"
+        const sellingPriceSpan = spans.find(
+          (s) => s.startsWith("₹") && !/MRP/i.test(s)
+        );
+        const sellingPrice = parsePrice(sellingPriceSpan);
+
+        // MRP: span containing "MRP"
+        const mrpSpan = spans.find((s) => /MRP/i.test(s));
+        const mrp = parsePrice(mrpSpan);
+
+        // Discount: span containing "% OFF"
+        const offSpan = spans.find((s) => /%\s*OFF/i.test(s));
+        const discountPercent = offSpan
+          ? parseInt(offSpan.replace(/[^0-9]/g, "")) || undefined
+          : undefined;
+
+        const cardText = (root.textContent ?? "").toLowerCase();
+        const inStock = !/out of stock|notify me|sold out|currently unavailable/i.test(
+          cardText
+        );
+
+        const slug = name
+          .toLowerCase()
+          .replace(/\s+/g, "-")
+          .replace(/[^a-z0-9-]/g, "");
 
         return {
           productName: name,
-          saltComposition: salt,
-          packSize: pack,
+          packSize,
           mrp,
-          sellingPrice: price,
-          discountPercent:
-            mrp && price && mrp > price
-              ? Math.round(((mrp - price) / mrp) * 100)
-              : undefined,
-          inStock: !card.querySelector('[class*="outOfStock"], [class*="OutOfStock"]'),
-          productUrl: link.startsWith("http")
-            ? link
-            : `https://www.truemeds.in${link}`,
+          sellingPrice,
+          discountPercent,
+          inStock,
+          productUrl: `https://www.truemeds.in/medicine/${slug}`,
           pharmacyName: "truemeds",
         };
       });
