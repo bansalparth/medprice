@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Medicine {
+  id              String   @id @default(cuid())
+  // Display name: "Crocin Advance 500mg Tablet"
+  name            String
+  // Lowercase normalized: "crocin advance 500mg tablet" — used for autocomplete + dedup
+  normalizedName  String   @unique
+  // Brand alone: "Crocin Advance"
+  brandName       String?
+  // Manufacturer: "GSK Pharmaceuticals"
+  manufacturer    String?
+  // Comma-separated raw salt composition string for display
+  saltComposition String?
+  // JSON-encoded array of structured ingredients: [{name, strength, unit}]
+  ingredients     String?
+  // "Tablet" | "Capsule" | "Syrup" | "Injection" | "Drops" | "Cream" | "Ointment" | "Gel" | "Inhaler"
+  dosageForm      String?
+  // Pack size: "10 Tablets", "100ml", "Strip of 15"
+  packSize        String?
+  category        String?
+  description     String?
+  // True if this row exists for autocomplete only and may not have live prices yet
+  isCatalog       Boolean  @default(false)
+  // Whether a doctor's prescription is legally required to dispense this drug
+  prescriptionRequired Boolean @default(false)
+  // Whether the drug is generally available for online sale in India
+  soldOnline      Boolean  @default(true)
+  // Plain-language uses (newline-separated bullets ok)
+  uses            String?
+  // How it works / mechanism summary
+  howItWorks      String?
+  // Common side effects (newline-separated)
+  sideEffects     String?
+  // Safety warnings, contraindications
+  warnings        String?
+  // Storage instructions
+  storage         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  listings     PharmacyListing[]
+  saltMappings SaltMapping[]
+  searchLogs   SearchLog[]
+
+  @@index([normalizedName])
+  @@index([brandName])
+}
+
+model PharmacyListing {
+  id              String   @id @default(cuid())
+  medicineId      String
+  medicine        Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  pharmacyName    String
+  brandName       String?
+  productName     String
+  packSize        String?
+  mrp             Float?
+  sellingPrice    Float?
+  discountPercent Float?
+  inStock         Boolean  @default(true)
+  productUrl      String?
+  // Estimated delivery ETA for the requested pincode, e.g. "Tomorrow", "2-3 days"
+  deliveryEta     String?
+  // Pincode this listing was last scraped against (delivery + stock are pincode-specific)
+  pincode         String?
+  scrapedAt       DateTime @default(now())
+
+  @@index([medicineId])
+  @@index([pharmacyName])
+  @@index([scrapedAt])
+}
+
+model JanAushadhiProduct {
+  id              String   @id @default(cuid())
+  drugCode        String   @unique
+  genericName     String
+  saltComposition String?
+  unitSize        String?
+  mrpBppi         Float?
+  updatedAt       DateTime @updatedAt
+
+  saltMappings SaltMapping[]
+}
+
+model JanAushadhiStore {
+  id        String  @id @default(cuid())
+  kendraId  String  @unique
+  state     String?
+  district  String?
+  address   String?
+  lat       Float?
+  lng       Float?
+}
+
+model SaltMapping {
+  id                   String             @id @default(cuid())
+  medicineId           String
+  medicine             Medicine           @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  janAushadhiProductId String
+  janAushadhiProduct   JanAushadhiProduct @relation(fields: [janAushadhiProductId], references: [id], onDelete: Cascade)
+  matchConfidence      String
+  createdAt            DateTime           @default(now())
+
+  @@unique([medicineId, janAushadhiProductId])
+}
+
+model ScrapeJob {
+  id               String    @id @default(cuid())
+  pharmacy         String
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+  medicinesScraped Int?
+  status           String
+  errorMessage     String?
+}
+
+model SearchLog {
+  id               String    @id @default(cuid())
+  query            String
+  medicineId       String?
+  medicine         Medicine? @relation(fields: [medicineId], references: [id], onDelete: SetNull)
+  inputMethod      String
+  resultsCount     Int?
+  janAushadhiMatch Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+}
+
+model ClickLog {
+  id           String   @id @default(cuid())
+  pharmacyName String
+  medicineId   String
+  productUrl   String
+  createdAt    DateTime @default(now())
+}
+
+model PriceHistory {
+  id           String   @id @default(cuid())
+  medicineId   String
+  pharmacyName String
+  sellingPrice Float?
+  mrp          Float?
+  recordedAt   DateTime @default(now())
+
+  @@index([medicineId, pharmacyName, recordedAt])
+  @@index([medicineId, recordedAt])
+}
