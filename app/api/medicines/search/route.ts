@@ -17,19 +17,29 @@ export async function GET(req: NextRequest) {
   }
 
   // Pull a bigger window of candidates, then rank in JS (SQLite has no FTS-default).
+  //
+  // Show a medicine if either:
+  //   1. It has at least one in-stock listing, OR
+  //   2. It's a catalog entry that hasn't been scraped yet (no listings).
+  //
+  // Hide a medicine only when it has listings AND every one of them is OOS
+  // (the discontinued / not-for-sale case). This way the 7,400+ catalog
+  // medicines awaiting their first scrape stay searchable.
   const rough = await prisma.medicine.findMany({
     where: {
       OR: [
-        { normalizedName: { contains: q } },
-        { brandName: { contains: q } },
-        { saltComposition: { contains: q } },
+        { normalizedName: { contains: q, mode: "insensitive" } },
+        { brandName: { contains: q, mode: "insensitive" } },
+        { saltComposition: { contains: q, mode: "insensitive" } },
       ],
-      // Only show medicines that have at least one in-stock listing
-      listings: {
-        some: {
-          inStock: true,
+      AND: [
+        {
+          OR: [
+            { listings: { some: { inStock: true } } },
+            { AND: [{ isCatalog: true }, { listings: { none: {} } }] },
+          ],
         },
-      },
+      ],
     },
     select: {
       id: true,
