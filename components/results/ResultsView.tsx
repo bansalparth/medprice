@@ -66,6 +66,7 @@ interface SearchResponse {
   medicine: MedicineData | null;
   cached?: boolean;
   stale?: boolean;
+  message?: string;
 }
 
 interface Props {
@@ -256,10 +257,33 @@ export function ResultsView({ medicineId, query }: Props) {
 
           <div className="space-y-3">
             {listings.length === 0 && (
-              <div className="text-text-secondary text-sm text-center py-12">
-                No live pharmacy listings yet. This medicine may not be available
-                online right now, or our scrapers couldn&apos;t find it. Try again
-                in a moment.
+              <div className="glass-card p-8 text-center">
+                {medicine.drugDetail?.soldOnline === false ? (
+                  <>
+                    <ShieldX
+                      size={28}
+                      className="mx-auto mb-3 text-red-300"
+                    />
+                    <div className="font-display font-semibold text-base mb-1">
+                      Not sold online in India
+                    </div>
+                    <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
+                      This medicine isn&apos;t listed by any online pharmacy.
+                      {janAushadhiMatch
+                        ? " A Jan Aushadhi generic alternative is available below — try a nearby store."
+                        : " Check a nearby pharmacy for availability."}
+                    </div>
+                  </>
+                ) : data?.message ? (
+                  <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
+                    {data.message}
+                  </div>
+                ) : (
+                  <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
+                    No live pharmacy listings yet. Our scrapers couldn&apos;t
+                    find it. Try again in a moment.
+                  </div>
+                )}
               </div>
             )}
             {listings.map((l, i) => (
