@@ -33,6 +33,10 @@ export async function scrape(
       headers: {
         referer: "https://www.truemeds.in/",
         origin: "https://www.truemeds.in",
+        "x-requested-with": "XMLHttpRequest",
+        "sec-fetch-site": "same-site",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
       },
       timeoutMs: 8000,
     });
@@ -41,6 +45,7 @@ export async function scrape(
   }
 
   const items = json?.responseData?.elasticProductDetails ?? [];
+  console.log(`[truemeds] raw response keys: ${Object.keys(json ?? {}).join(",")}, items: ${items.length}`);
 
   const out: ScrapedListing[] = [];
   for (const entry of items.slice(0, 6)) {
