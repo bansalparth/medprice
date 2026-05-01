@@ -1,5 +1,4 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import fs from "fs";
 
 const SYSTEM_PROMPT = `You are a medical prescription parser. Extract all medicine/drug names from this prescription image.
 
@@ -17,20 +16,16 @@ Rules:
 export type OcrResult = { medicines: string[]; confidence: "high" | "medium" | "low" };
 
 export async function extractMedicinesFromImage(
-  imagePath: string,
+  imageBuffer: Buffer,
   mimeType: "image/jpeg" | "image/png" | "image/webp" = "image/jpeg"
 ): Promise<OcrResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.startsWith("AIza...")) {
-    throw new Error("GEMINI_API_KEY is not configured. Add it to .env.local");
+    throw new Error("GEMINI_API_KEY is not configured.");
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  // The legacy "gemini-1.5-flash" was sunset on the v1beta API. We try the
-  // stable Flash model first, then fall back to the rolling alias if the
-  // pinned version is overloaded.
-  const imageData = fs.readFileSync(imagePath);
-  const base64 = imageData.toString("base64");
+  const base64 = imageBuffer.toString("base64");
   const parts = [
     SYSTEM_PROMPT,
     { inlineData: { mimeType, data: base64 } },
@@ -46,7 +41,6 @@ export async function extractMedicinesFromImage(
     result = await tryModel("gemini-2.5-flash");
   } catch (err: any) {
     const msg = String(err?.message ?? "");
-    // 503 (overloaded) or 404 (model gone) → try the rolling alias
     if (/503|overloaded|not found|404/i.test(msg)) {
       result = await tryModel("gemini-flash-latest");
     } else {
@@ -54,19 +48,26 @@ export async function extractMedicinesFromImage(
     }
   }
 
-  const text = result.response.text().trim();
+  const text = (result.response.text() ?? "").trim();
 
+  if (!text) {
+    throw new Error("Gemini returned an empty response.");
+  }
+
+  const clean = text.replace(/```json|```/g, "").trim();
+  let parsed: any;
   try {
-    const clean = text.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean);
-    return {
-      medicines: Array.isArray(parsed.medicines) ? parsed.medicines : [],
-      confidence: ["high", "medium", "low"].includes(parsed.confidence)
-        ? parsed.confidence
-        : "medium",
-    };
+    parsed = JSON.parse(clean);
   } catch {
     console.error("[ocr] Failed to parse Gemini response:", text);
-    return { medicines: [], confidence: "low" };
+    throw new Error(
+      `Could not parse AI response. Raw output: ${text.slice(0, 200)}`
+    );
   }
+  return {
+    medicines: Array.isArray(parsed.medicines) ? parsed.medicines : [],
+    confidence: ["high", "medium", "low"].includes(parsed.confidence)
+      ? parsed.confidence
+      : "medium",
+  };
 }
