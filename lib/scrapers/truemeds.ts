@@ -49,7 +49,8 @@ export async function scrape(
   }
 
   const items = json?.responseData?.elasticProductDetails ?? [];
-  console.log(`[truemeds] raw response keys: ${Object.keys(json ?? {}).join(",")}, items: ${items.length}`);
+  const rd = (json as any)?.responseData ?? {};
+  console.log(`[truemeds] statusCode=${(json as any)?.statusCode} message="${(json as any)?.message}" items=${items.length} rdKeys=${Object.keys(rd).join(",")} rdOther=${JSON.stringify(Object.fromEntries(Object.entries(rd).filter(([k]) => k !== "elasticProductDetails")))}`);
 
   const out: ScrapedListing[] = [];
   for (const entry of items.slice(0, 6)) {
