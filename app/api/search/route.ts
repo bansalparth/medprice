@@ -413,6 +413,11 @@ async function persistScrapeResults(
     // No fallback — better to return empty than to leak cross-sell results.
   }
 
+  // Per-pharmacy dedup: a single search like "Spas" otherwise yields Spas
+  // Tablet, Spas DS, Spas Suspension, Spas Injection from the same pharmacy.
+  // Pick the listing whose product name best matches the canonical brand+form.
+  relevantScraped = dedupePerPharmacy(relevantScraped, sourceText, brandTokens);
+
   if (relevantScraped.length === 0) {
     return { relevantCount: 0 };
   }
@@ -529,6 +534,61 @@ async function persistScrapeResults(
   }
 
   return { relevantCount: relevantScraped.length };
+}
+
+const NOISE_TOKENS = new Set([
+  "tablet", "tablets", "capsule", "capsules", "tab", "tabs", "cap", "caps",
+  "strip", "strips", "bottle", "pack", "of", "syrup", "drops", "injection",
+  "cream", "gel", "ointment", "suspension", "solution", "sachet", "sachets",
+  "piece", "pieces", "unit", "units", "box", "jar", "carton", "ml", "mg",
+  "mcg", "gm", "g", "iu",
+]);
+
+function dedupePerPharmacy(
+  listings: ScrapedListing[],
+  sourceText: string,
+  brandTokens: string[]
+): ScrapedListing[] {
+  const sourceLower = sourceText.toLowerCase();
+  const brandSet = new Set(brandTokens.map((t) => t.toLowerCase()));
+
+  const tokenize = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9.\s]/g, " ").split(/\s+/).filter(Boolean);
+
+  const score = (productName: string): number => {
+    const name = productName.toLowerCase();
+    // Exact substring of canonical brand+form is strongest signal.
+    let s = name.includes(sourceLower) ? 100 : 0;
+    const tokens = tokenize(productName);
+    for (const t of tokens) {
+      if (brandSet.has(t)) s += 5;
+      else if (!NOISE_TOKENS.has(t) && !/^\d+(\.\d+)?$/.test(t)) {
+        // Extra non-noise word (e.g. "DS", "Plus", "MD") penalises.
+        s -= 2;
+      }
+    }
+    // Shorter names win on ties.
+    s -= productName.length * 0.01;
+    return s;
+  };
+
+  const best = new Map<string, ScrapedListing>();
+  const bestScore = new Map<string, number>();
+  for (const l of listings) {
+    const sc = score(l.productName);
+    const cur = bestScore.get(l.pharmacyName);
+    if (cur === undefined || sc > cur) {
+      best.set(l.pharmacyName, l);
+      bestScore.set(l.pharmacyName, sc);
+    } else if (sc === cur) {
+      // Tie-break on price.
+      const curListing = best.get(l.pharmacyName)!;
+      const curPrice = curListing.sellingPrice ?? curListing.mrp ?? Infinity;
+      const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
+      if (newPrice < curPrice) best.set(l.pharmacyName, l);
+    }
+  }
+  return Array.from(best.values());
 }
 
 /**
