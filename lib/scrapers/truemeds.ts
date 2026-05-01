@@ -19,13 +19,34 @@ interface TMResponse {
   };
 }
 
+// Map pincode prefix → Truemeds zone code (Maharashtra default covers Mumbai).
+// Without a zone param the API returns 0 results for non-Indian IPs.
+const PINCODE_TO_ZONE: Record<string, string> = {
+  "110": "DL", // Delhi
+  "400": "MH", // Mumbai
+  "500": "TS", // Hyderabad
+  "560": "KA", // Bangalore
+  "600": "TN", // Chennai
+  "700": "WB", // Kolkata
+  "411": "MH", // Pune
+};
+
+function zoneFor(pincode?: string | null): string {
+  if (pincode) {
+    const zone = PINCODE_TO_ZONE[pincode.slice(0, 3)];
+    if (zone) return zone;
+  }
+  return "MH"; // default: Maharashtra/Mumbai
+}
+
 export async function scrape(
   query: string,
-  _pincode?: string | null
+  pincode?: string | null
 ): Promise<ScrapedListing[]> {
+  const zone = zoneFor(pincode);
   const url =
     "https://nal.tmmumbai.in/SearchService/getSearchResult" +
-    `?searchString=${encodeURIComponent(query)}`;
+    `?searchString=${encodeURIComponent(query)}&zone=${zone}`;
 
   let json: TMResponse;
   try {
@@ -33,14 +54,6 @@ export async function scrape(
       headers: {
         referer: "https://www.truemeds.in/",
         origin: "https://www.truemeds.in",
-        "x-requested-with": "XMLHttpRequest",
-        "sec-fetch-site": "same-site",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-        // Hint server we're calling from India (geo-IP check bypass)
-        "x-forwarded-for": "49.249.60.1",
-        "cf-ipcountry": "IN",
-        "x-country": "IN",
       },
       timeoutMs: 8000,
     });
@@ -49,8 +62,6 @@ export async function scrape(
   }
 
   const items = json?.responseData?.elasticProductDetails ?? [];
-  const rd = (json as any)?.responseData ?? {};
-  console.log(`[truemeds] statusCode=${(json as any)?.statusCode} message="${(json as any)?.message}" items=${items.length} rdKeys=${Object.keys(rd).join(",")} rdOther=${JSON.stringify(Object.fromEntries(Object.entries(rd).filter(([k]) => k !== "elasticProductDetails")))}`);
 
   const out: ScrapedListing[] = [];
   for (const entry of items.slice(0, 6)) {
