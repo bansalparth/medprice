@@ -37,6 +37,10 @@ export async function scrape(
         "sec-fetch-site": "same-site",
         "sec-fetch-mode": "cors",
         "sec-fetch-dest": "empty",
+        // Hint server we're calling from India (geo-IP check bypass)
+        "x-forwarded-for": "49.249.60.1",
+        "cf-ipcountry": "IN",
+        "x-country": "IN",
       },
       timeoutMs: 8000,
     });
