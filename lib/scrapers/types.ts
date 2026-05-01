@@ -17,12 +17,11 @@ export type ScraperFn = (
 ) => Promise<ScrapedListing[]>;
 
 export const PHARMACIES = [
-  "1mg",
   "netmeds",
   "pharmeasy",
-  "apollo",
   "truemeds",
   "mrmed",
+  "apollo",
 ] as const;
 
 export type PharmacyName = (typeof PHARMACIES)[number];

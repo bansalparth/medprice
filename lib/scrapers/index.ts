@@ -1,4 +1,3 @@
-import { scrape as scrape1mg } from "./onemg";
 import { scrape as scrapeNetmeds } from "./netmeds";
 import { scrape as scrapePharmeasy } from "./pharmeasy";
 import { scrape as scrapeApollo } from "./apollo";
@@ -19,12 +18,11 @@ interface ScraperEntry {
 }
 
 const SCRAPERS: ScraperEntry[] = [
-  { name: "1mg", fn: scrape1mg, kind: "http" },
   { name: "netmeds", fn: scrapeNetmeds, kind: "http" },
   { name: "pharmeasy", fn: scrapePharmeasy, kind: "http" },
+  { name: "truemeds", fn: scrapeTruemeds, kind: "http" },
+  { name: "mrmed", fn: scrapeMrmed, kind: "http" },
   { name: "apollo", fn: scrapeApollo, kind: "browser" },
-  { name: "truemeds", fn: scrapeTruemeds, kind: "browser" },
-  { name: "mrmed", fn: scrapeMrmed, kind: "browser" },
 ];
 
 /**
@@ -33,7 +31,6 @@ const SCRAPERS: ScraperEntry[] = [
  * pincode-aware vs national list pricing.
  */
 export const PINCODE_AWARE_PHARMACIES = new Set([
-  "1mg",
   "pharmeasy",
   "netmeds",
   "apollo",
