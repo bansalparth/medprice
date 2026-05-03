@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * One-shot data migration from local SQLite (`prisma/dev.db.backup`) to the
  * Postgres database currently configured via DATABASE_URL (Neon).
