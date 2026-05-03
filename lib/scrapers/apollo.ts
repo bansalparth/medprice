@@ -43,7 +43,7 @@ export async function scrape(
         document.querySelectorAll('[class*="ProductCard_productCardGrid"]')
       );
 
-      return cards.slice(0, 6).map((card) => {
+      return cards.slice(0, 12).map((card) => {
         // Apollo uses minified single-letter class names that change on every build,
         // so we extract using text patterns + DOM structure rather than CSS classes.
 
@@ -115,7 +115,8 @@ export async function scrape(
           (card.querySelector("a") as HTMLAnchorElement | null)?.href ?? "";
 
         const outOfStock =
-          /out\s*of\s*stock/i.test(allText) || /notify\s*me/i.test(allText);
+          /out\s*of\s*stock|not\s+available\s+for\s+online\s+sale|currently\s+unavailable|not\s+serviceable|discontinued|sold\s+out/i.test(allText) ||
+          /notify\s*me/i.test(allText);
 
         return {
           productName: name,

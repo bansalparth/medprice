@@ -64,7 +64,7 @@ export async function scrape(
   const items = json?.responseData?.elasticProductDetails ?? [];
 
   const out: ScrapedListing[] = [];
-  for (const entry of items.slice(0, 6)) {
+  for (const entry of items.slice(0, 12)) {
     const p = entry.product;
     if (!p?.skuName) continue;
 

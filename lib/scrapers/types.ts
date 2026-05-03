@@ -21,6 +21,7 @@ export const PHARMACIES = [
   "pharmeasy",
   "truemeds",
   "mrmed",
+  "1mg",
   "apollo",
 ] as const;
 

@@ -51,7 +51,7 @@ export async function scrape(
 
   return items
     .filter((it) => it.type === "product")
-    .slice(0, 6)
+    .slice(0, 12)
     .map((it) => {
       const mrp = parsePrice(it.price?.marked?.min);
       const sellingPrice = parsePrice(it.price?.effective?.min) ?? mrp;

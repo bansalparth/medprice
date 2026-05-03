@@ -3,6 +3,7 @@ import { scrape as scrapePharmeasy } from "./pharmeasy";
 import { scrape as scrapeApollo } from "./apollo";
 import { scrape as scrapeTruemeds } from "./truemeds";
 import { scrape as scrapeMrmed } from "./mrmed";
+import { scrape as scrapeOnemg } from "./onemg";
 import type { ScrapedListing, ScraperFn } from "./types";
 
 export type { ScrapedListing } from "./types";
@@ -22,6 +23,7 @@ const SCRAPERS: ScraperEntry[] = [
   { name: "pharmeasy", fn: scrapePharmeasy, kind: "http" },
   { name: "truemeds", fn: scrapeTruemeds, kind: "http" },
   { name: "mrmed", fn: scrapeMrmed, kind: "http" },
+  { name: "1mg", fn: scrapeOnemg, kind: "http" },
   { name: "apollo", fn: scrapeApollo, kind: "browser" },
 ];
 

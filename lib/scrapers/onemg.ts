@@ -48,7 +48,7 @@ export async function scrape(
     "https://www.1mg.com/pwa-api/api/v4/search/all" +
     `?q=${encodeURIComponent(query)}` +
     `&city=${encodeURIComponent(city)}` +
-    "&types=sku&page=1&per_page=10";
+    "&types=sku&page=1&per_page=15";
 
   const json = await fetchJson<OneMgResponse>(url, {
     headers: {
@@ -62,7 +62,7 @@ export async function scrape(
 
   return results
     .filter((r) => r.type === "drug" || r.type === "otc")
-    .slice(0, 6)
+    .slice(0, 12)
     .map((r) => {
       const mrp = parsePrice(r.prices?.mrp);
       const sellingPrice = parsePrice(r.prices?.discounted_price) ?? mrp;

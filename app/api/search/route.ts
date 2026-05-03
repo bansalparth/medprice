@@ -269,6 +269,7 @@ async function persistScrapeResults(
     );
 
   const tokenRegexes = brandTokens.map(tokenRegex);
+  const brandSet = new Set(brandTokens);
 
   // Bundle/multi-pack blacklist — these are not the standard SKU.
   // "Combo Pack of...", "Fever Management Combo... & Crocin", "Pack of 4 strips" etc.
@@ -380,6 +381,41 @@ async function persistScrapeResults(
   };
   const catalogSuffixes = extractSuffixes(sourceText);
 
+  // Dosage form groups — "Tablet" and "Injection" are fundamentally different
+  // products even when they share a brand name.
+  const DOSAGE_FORM_GROUPS: Record<string, string[]> = {
+    tablet:      ["tablet", "tablets", "tab", "tabs"],
+    capsule:     ["capsule", "capsules", "cap", "caps", "softgel", "softgels"],
+    syrup:       ["syrup", "suspension", "oral solution", "liquid", "elixir"],
+    injection:   ["injection", "injections", "inj", "vial", "ampoule"],
+    drops:       ["drops", "drop"],
+    cream:       ["cream"],
+    gel:         ["gel"],
+    ointment:    ["ointment"],
+    inhaler:     ["inhaler", "rotacaps", "respules"],
+    spray:       ["spray"],
+    powder:      ["powder", "sachet", "granules"],
+    patch:       ["patch", "patches"],
+    suppository: ["suppository", "suppositories"],
+  };
+
+  const allFormKeywords = new Map<string, string>();
+  for (const [group, keywords] of Object.entries(DOSAGE_FORM_GROUPS)) {
+    for (const kw of keywords) allFormKeywords.set(kw, group);
+  }
+
+  const detectDosageGroup = (text: string): string | null => {
+    const lower = text.toLowerCase();
+    for (const [kw, group] of allFormKeywords) {
+      if (new RegExp(`\\b${kw}\\b`, "i").test(lower)) return group;
+    }
+    return null;
+  };
+
+  const catalogDosageGroup: string | null = medRow.dosageForm
+    ? detectDosageGroup(medRow.dosageForm) ?? detectDosageGroup(sourceText)
+    : detectDosageGroup(sourceText);
+
   let relevantScraped = scraped;
   if (tokenRegexes.length > 0) {
     relevantScraped = scraped.filter((s) => {
@@ -406,6 +442,37 @@ async function persistScrapeResults(
       if (catalogSuffixes.size === 0 && prodSuffixes.size > 0) return false;
       for (const sfx of catalogSuffixes) {
         if (!prodSuffixes.has(sfx)) return false;
+      }
+
+      // 5. Dosage form must match. "Meftal Spas Tablet" must not return
+      //    "Meftal Spas Injection". If the product mentions a dosage form
+      //    that belongs to a different group, reject it. If the product
+      //    mentions no form at all, accept (some listings omit it).
+      if (catalogDosageGroup) {
+        const prodGroup = detectDosageGroup(s.productName);
+        if (prodGroup && prodGroup !== catalogDosageGroup) return false;
+      }
+
+      // 6. For short brand names (1-2 tokens), reject products where the
+      //    brand is buried deep in the name (likely cross-sell).
+      if (brandTokens.length <= 2) {
+        const prodWords = s.productName
+          .toLowerCase()
+          .replace(/[^a-z0-9.\s]/g, " ")
+          .split(/\s+/)
+          .filter(Boolean);
+        const firstBrandIdx = prodWords.findIndex((w) =>
+          brandTokens.some((bt) => w === bt || w.startsWith(bt))
+        );
+        if (brandTokens.length === 1 && firstBrandIdx >= 3) return false;
+
+        const extraWords = prodWords.filter(
+          (w) =>
+            !brandSet.has(w) &&
+            !NOISE_TOKENS.has(w) &&
+            !/^\d+(\.\d+)?$/.test(w)
+        );
+        if (extraWords.length > 4) return false;
       }
 
       return true;

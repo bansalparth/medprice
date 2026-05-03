@@ -49,7 +49,7 @@ export async function scrape(
 
   return products
     .filter((p) => !!p.product_name)
-    .slice(0, 6)
+    .slice(0, 12)
     .map((p) => {
       const mrp = parsePrice(p.mrp);
       const sellingPrice = parsePrice(p.price_to_customer) ?? mrp;

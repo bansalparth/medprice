@@ -47,7 +47,7 @@ export async function scrape(
 
   return items
     .filter((it) => it.productType === 1 || it.entityType === 2)
-    .slice(0, 6)
+    .slice(0, 12)
     .map((it) => {
       const mrp = parsePrice(it.mrpDecimal);
       const sellingPrice = parsePrice(it.salePriceDecimal) ?? mrp;

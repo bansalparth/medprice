@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, Pill, FileWarning, ShieldX, Stethoscope, AlertTriangle, Info, Thermometer } from "lucide-react";
+import { AlertCircle, Pill, FileWarning, ShieldX, Stethoscope, AlertTriangle, Info, Thermometer, ChevronDown } from "lucide-react";
 import { PriceCard } from "./PriceCard";
 import { JanAushadhiCard } from "./JanAushadhiCard";
 import { StoreLocatorPanel } from "./StoreLocatorPanel";
@@ -115,11 +115,13 @@ export function ResultsView({ medicineId, query }: Props) {
     };
   }, [medicineId, query, location?.pincode]);
 
+  const [showOos, setShowOos] = useState(false);
+
   const medicine = data?.medicine;
-  const listings = medicine?.listings ?? [];
-  // Sort: in-stock first (already sorted server-side), then ascending price.
-  // Compute cheapest among IN-STOCK listings only.
-  const inStockListings = listings.filter((l) => l.inStock);
+  const allListings = medicine?.listings ?? [];
+  const inStockListings = allListings.filter((l) => l.inStock);
+  const oosListings = allListings.filter((l) => !l.inStock);
+  const listings = inStockListings;
   const cheapest = inStockListings.find((l) => l.sellingPrice != null);
   const cheapestPrice = cheapest?.sellingPrice ?? null;
   const janAushadhiMatch = medicine?.saltMappings?.[0]?.janAushadhiProduct ?? null;
@@ -256,7 +258,7 @@ export function ResultsView({ medicineId, query }: Props) {
           )}
 
           <div className="space-y-3">
-            {listings.length === 0 && (
+            {allListings.length === 0 && (
               <div className="glass-card p-8 text-center">
                 {medicine.drugDetail?.soldOnline === false ? (
                   <>
@@ -295,6 +297,30 @@ export function ResultsView({ medicineId, query }: Props) {
                 index={i}
               />
             ))}
+            {oosListings.length > 0 && (
+              <div className="mt-2">
+                <button
+                  onClick={() => setShowOos((v) => !v)}
+                  className="flex items-center gap-2 text-text-secondary text-sm hover:text-white transition-colors mx-auto"
+                >
+                  <ChevronDown
+                    size={14}
+                    className={`transition-transform ${showOos ? "rotate-180" : ""}`}
+                  />
+                  {oosListings.length} {oosListings.length === 1 ? "pharmacy" : "pharmacies"} out of stock
+                </button>
+                {showOos &&
+                  oosListings.map((l, i) => (
+                    <PriceCard
+                      key={l.id}
+                      listing={l}
+                      medicineId={medicine.id}
+                      isCheapest={false}
+                      index={inStockListings.length + i}
+                    />
+                  ))}
+              </div>
+            )}
           </div>
 
           {medicine.drugDetail && (
