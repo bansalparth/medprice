@@ -12,6 +12,15 @@ interface OneMgResult {
     mrp?: string | number;
     discounted_price?: string | number | null;
     discount?: string | null;
+    best_price?: {
+      tags?: Array<{
+        mix_panel_data?: {
+          sku_list_price?: number;
+          sku_coupon_price?: number;
+          sku_best_price?: number;
+        };
+      }>;
+    } | null;
   };
   not_available_tag?: { text?: string } | null;
   cta?: { text?: string } | null;
@@ -65,7 +74,13 @@ export async function scrape(
     .slice(0, 12)
     .map((r) => {
       const mrp = parsePrice(r.prices?.mrp);
-      const sellingPrice = parsePrice(r.prices?.discounted_price) ?? mrp;
+      let sellingPrice = parsePrice(r.prices?.discounted_price);
+      if (sellingPrice == null && r.prices?.best_price?.tags?.length) {
+        sellingPrice = parsePrice(
+          r.prices.best_price.tags[0]?.mix_panel_data?.sku_list_price
+        );
+      }
+      sellingPrice = sellingPrice ?? mrp;
       const discountStr = r.prices?.discount;
       const discountPercent = discountStr
         ? parseInt(String(discountStr).replace(/[^0-9]/g, "")) || undefined

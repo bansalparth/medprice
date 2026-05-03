@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Camera, Pill } from "lucide-react";
+import { Search, Camera, Pill, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { VoiceButton } from "./VoiceButton";
 import { PrescriptionUploadModal } from "./PrescriptionUploadModal";
@@ -35,6 +35,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
   const [hoverIdx, setHoverIdx] = useState(-1);
   const [showUpload, setShowUpload] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [navigating, setNavigating] = useState(false);
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -48,6 +49,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
   useEffect(() => {
     skipNextFetchRef.current = true;
     setValue(initialValue);
+    setNavigating(false);
   }, [initialValue]);
 
   // Cycle placeholders
@@ -72,7 +74,26 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  // Debounced fetch
+  const fetchSuggestions = async (q: string) => {
+    if (q.trim().length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const r = await fetch(
+        `/api/medicines/search?q=${encodeURIComponent(q.trim())}&limit=10`
+      );
+      const d = await r.json();
+      setSuggestions(d.results ?? []);
+      setShowSuggest(true);
+      setHoverIdx(-1);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Debounced fetch on value change
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (skipNextFetchRef.current) {
@@ -84,19 +105,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
       return;
     }
     setLoading(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const r = await fetch(
-          `/api/medicines/search?q=${encodeURIComponent(value.trim())}&limit=10`
-        );
-        const d = await r.json();
-        setSuggestions(d.results ?? []);
-        setShowSuggest(true);
-        setHoverIdx(-1);
-      } finally {
-        setLoading(false);
-      }
-    }, 200);
+    debounceRef.current = setTimeout(() => fetchSuggestions(value), 120);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
@@ -108,6 +117,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
     setValue(display);
     setSuggestions([]);
     setShowSuggest(false);
+    setNavigating(true);
     inputRef.current?.blur();
     router.push(
       `/search?medicineId=${s.id}&q=${encodeURIComponent(display)}`
@@ -135,12 +145,22 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
     <>
       <div ref={wrapRef} className="relative z-50">
         <div className="search-input glass-card flex items-center gap-1 px-4 py-2.5 transition-all">
-          <Search size={20} className="text-text-secondary shrink-0" />
+          {navigating ? (
+            <Loader2 size={20} className="text-purple-400 shrink-0 animate-spin" />
+          ) : (
+            <Search size={20} className="text-text-secondary shrink-0" />
+          )}
           <input
             ref={inputRef}
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            onFocus={() => suggestions.length > 0 && setShowSuggest(true)}
+            onFocus={() => {
+              if (suggestions.length > 0) {
+                setShowSuggest(true);
+              } else if (value.trim().length >= 2) {
+                fetchSuggestions(value);
+              }
+            }}
             onKeyDown={onKey}
             placeholder={placeholder}
             autoComplete="off"

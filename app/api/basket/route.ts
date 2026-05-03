@@ -52,7 +52,32 @@ async function processOne(
   let listings = med?.listings ?? [];
 
   if (listings.length === 0) {
-    const scraped = await scrapeAll(query, pincode);
+    const allScraped = await scrapeAll(query, pincode);
+
+    // Relevance filter: same brand-token logic as search route
+    const brandTokens = query
+      .toLowerCase()
+      .replace(/[^a-z0-9.\s]/g, " ")
+      .split(/\s+/)
+      .filter(
+        (t) =>
+          t.length >= 1 &&
+          t !== "." &&
+          !["tablet", "capsule", "syrup", "drops", "injection", "cream", "gel"].includes(t)
+      );
+    const tokenRegexes = brandTokens.map((tok) => {
+      const esc = tok.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+      if (/^\d+(\.\d+)?$/.test(tok))
+        return new RegExp(`\\b${esc}(?:\\s?(?:mg|mcg|ml|gm|g|iu|%))?\\b`, "i");
+      return new RegExp(`\\b${esc}\\b`, "i");
+    });
+    const scraped =
+      tokenRegexes.length > 0
+        ? allScraped.filter((s) =>
+            tokenRegexes.every((re) => re.test(s.productName))
+          )
+        : allScraped;
+
     if (scraped.length > 0) {
       const salt = scraped.find((s) => s.saltComposition)?.saltComposition ?? null;
       med = await prisma.medicine.upsert({

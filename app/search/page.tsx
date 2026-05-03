@@ -104,6 +104,8 @@ export default async function SearchPage({
     ? [q, ...batch.split(",").map((s) => s.trim()).filter(Boolean)].filter(Boolean)
     : [];
 
+  const searchBarDisplay = queries.length > 1 ? queries.join(", ") : q;
+
   return (
     <>
       {jsonLd && (
@@ -115,7 +117,7 @@ export default async function SearchPage({
       <Header />
       <main className="pb-20">
         <div className="max-w-3xl mx-auto px-4 pt-6">
-          <SearchBar initialValue={q} />
+          <SearchBar initialValue={searchBarDisplay} />
         </div>
 
         {queries.length > 1 ? (

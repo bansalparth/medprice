@@ -112,10 +112,14 @@ export function BasketView({ queries }: { queries: string[] }) {
     );
   }
 
-  // Pharmacies sorted by total ascending (only those that cover something)
+  // Pharmacies sorted by coverage desc, then total asc
   const pharmacyRanking = Object.entries(data.totals)
     .filter(([, t]) => t.covered > 0)
-    .sort((a, b) => a[1].total - b[1].total);
+    .sort((a, b) => {
+      const covDiff = b[1].covered - a[1].covered;
+      if (covDiff !== 0) return covDiff;
+      return a[1].total - b[1].total;
+    });
 
   const cheapestPharmacy = pharmacyRanking[0];
   const allPharmaciesInOrder = pharmacyRanking.map(([n]) => n);
@@ -131,7 +135,7 @@ export function BasketView({ queries }: { queries: string[] }) {
           <ShoppingCart className="text-purple-400" /> Your Basket
         </h1>
         <p className="text-text-secondary mt-1">
-          {data.items.length} medicines · ranked by total cost across pharmacies
+          {data.items.length} medicines · ranked by coverage, then cost
         </p>
       </motion.div>
 
@@ -333,7 +337,7 @@ export function BasketView({ queries }: { queries: string[] }) {
       </div>
 
       <p className="mt-4 text-xs text-text-muted text-center">
-        Per-medicine cheapest price highlighted in gold. Pharmacy with lowest covered total wins overall.
+        Per-medicine cheapest price highlighted in gold. Pharmacy covering the most medicines wins; ties broken by lowest total.
       </p>
     </div>
   );
