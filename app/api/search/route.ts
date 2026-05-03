@@ -676,10 +676,154 @@ function enrich(med: any, pincode: string | null) {
       med.prescriptionRequired ?? detail?.prescriptionRequired ?? false,
     soldOnline: med.soldOnline ?? detail?.soldOnline ?? true,
   };
-  const listings = (med.listings ?? []).map((l: any) => ({
+  let listings = (med.listings ?? []).map((l: any) => ({
     ...l,
     deliveryEta: l.deliveryEta ?? estimateDelivery(l.pharmacyName, pincode).eta,
   }));
+
+  // Read-time filtering: cached listings may predate the dosage form /
+  // dedup / relevance filters added in persistScrapeResults. Apply the
+  // same checks here so stale DB rows never reach the client.
+  listings = postFilterListings(listings, med);
+
   const saltMappings = med.saltMappings ?? [];
   return { ...med, listings, saltMappings, drugDetail };
+}
+
+/**
+ * Read-time filter applied to DB listings before sending to the client.
+ * Mirrors the write-time logic in persistScrapeResults so that stale
+ * cached data is cleaned up on the fly.
+ */
+function postFilterListings(listings: any[], med: any): any[] {
+  if (!listings.length || !med) return listings;
+
+  const FORM_GROUPS: Record<string, string[]> = {
+    tablet:      ["tablet", "tablets", "tab", "tabs"],
+    capsule:     ["capsule", "capsules", "cap", "caps", "softgel", "softgels"],
+    syrup:       ["syrup", "suspension", "oral solution", "liquid", "elixir"],
+    injection:   ["injection", "injections", "inj", "vial", "ampoule"],
+    drops:       ["drops", "drop"],
+    cream:       ["cream"],
+    gel:         ["gel"],
+    ointment:    ["ointment"],
+    inhaler:     ["inhaler", "rotacaps", "respules"],
+    spray:       ["spray"],
+    powder:      ["powder", "sachet", "granules"],
+    patch:       ["patch", "patches"],
+    suppository: ["suppository", "suppositories"],
+  };
+
+  const kwToGroup = new Map<string, string>();
+  for (const [group, kws] of Object.entries(FORM_GROUPS)) {
+    for (const kw of kws) kwToGroup.set(kw, group);
+  }
+
+  const detectGroup = (text: string): string | null => {
+    const lower = text.toLowerCase();
+    for (const [kw, group] of kwToGroup) {
+      if (new RegExp(`\\b${kw}\\b`, "i").test(lower)) return group;
+    }
+    return null;
+  };
+
+  const catalogGroup = med.dosageForm
+    ? detectGroup(med.dosageForm)
+    : detectGroup(med.brandName ?? med.name ?? "");
+
+  const sourceText: string = med.brandName ?? med.name ?? "";
+  const brandTokens = sourceText
+    .toLowerCase()
+    .replace(/[^a-z0-9.\s]/g, " ")
+    .split(/\s+/)
+    .filter(
+      (t: string) =>
+        t.length >= 1 &&
+        t !== "." &&
+        !["tablet", "capsule", "syrup", "drops", "injection", "cream", "gel"].includes(t)
+    );
+  const brandSet = new Set(brandTokens);
+
+  const tokenRegexes = brandTokens.map((tok: string) => {
+    const esc = tok.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+    if (/^\d+(\.\d+)?$/.test(tok)) {
+      return new RegExp(`\\b${esc}(?:\\s?(?:mg|mcg|ml|gm|g|iu|%))?\\b`, "i");
+    }
+    return new RegExp(`\\b${esc}\\b`, "i");
+  });
+
+  const BUNDLE_RE =
+    /\b(combo|hamper|combination|with\s+free)\b|\bpack\s+of\s+([2-9]|\d{2,})\b|\bthermometer\b|&\s/i;
+
+  let filtered = listings.filter((l: any) => {
+    const name = l.productName ?? "";
+    if (!name) return true;
+
+    if (BUNDLE_RE.test(name)) return false;
+
+    if (tokenRegexes.length > 0 && !tokenRegexes.every((re: RegExp) => re.test(name))) {
+      return false;
+    }
+
+    if (catalogGroup) {
+      const prodGroup = detectGroup(name);
+      if (prodGroup && prodGroup !== catalogGroup) return false;
+    }
+
+    if (brandTokens.length <= 2 && brandTokens.length > 0) {
+      const prodWords = name.toLowerCase().replace(/[^a-z0-9.\s]/g, " ").split(/\s+/).filter(Boolean);
+      const firstBrandIdx = prodWords.findIndex((w: string) =>
+        brandTokens.some((bt: string) => w === bt || w.startsWith(bt))
+      );
+      if (brandTokens.length === 1 && firstBrandIdx >= 3) return false;
+
+      const extraWords = prodWords.filter(
+        (w: string) => !brandSet.has(w) && !NOISE_TOKENS.has(w) && !/^\d+(\.\d+)?$/.test(w)
+      );
+      if (extraWords.length > 4) return false;
+    }
+
+    return true;
+  });
+
+  // Per-pharmacy dedup: keep best match per pharmacy
+  const sourceLower = sourceText.toLowerCase();
+  const score = (name: string): number => {
+    const lower = name.toLowerCase();
+    let s = lower.includes(sourceLower) ? 100 : 0;
+    const tokens = lower.replace(/[^a-z0-9.\s]/g, " ").split(/\s+/).filter(Boolean);
+    for (const t of tokens) {
+      if (brandSet.has(t)) s += 5;
+      else if (!NOISE_TOKENS.has(t) && !/^\d+(\.\d+)?$/.test(t)) s -= 2;
+    }
+    s -= name.length * 0.01;
+    return s;
+  };
+
+  const best = new Map<string, any>();
+  const bestScore = new Map<string, number>();
+  for (const l of filtered) {
+    const sc = score(l.productName ?? "");
+    const cur = bestScore.get(l.pharmacyName);
+    if (cur === undefined || sc > cur) {
+      best.set(l.pharmacyName, l);
+      bestScore.set(l.pharmacyName, sc);
+    } else if (sc === cur) {
+      const curL = best.get(l.pharmacyName)!;
+      const curPrice = curL.sellingPrice ?? curL.mrp ?? Infinity;
+      const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
+      if (newPrice < curPrice) best.set(l.pharmacyName, l);
+    }
+  }
+  filtered = Array.from(best.values());
+
+  // Re-sort: in-stock first, then by price
+  filtered.sort((a: any, b: any) => {
+    if (a.inStock !== b.inStock) return a.inStock ? -1 : 1;
+    const ap = a.sellingPrice ?? a.mrp ?? Infinity;
+    const bp = b.sellingPrice ?? b.mrp ?? Infinity;
+    return ap - bp;
+  });
+
+  return filtered;
 }
