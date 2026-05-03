@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, Pill, FileWarning, ShieldX, Stethoscope, AlertTriangle, Info, Thermometer, ChevronDown } from "lucide-react";
+import { AlertCircle, Pill, FileWarning, ShieldX, Stethoscope, AlertTriangle, Info, Thermometer, ChevronDown, RefreshCw } from "lucide-react";
 import { PriceCard } from "./PriceCard";
 import { JanAushadhiCard } from "./JanAushadhiCard";
 import { StoreLocatorPanel } from "./StoreLocatorPanel";
@@ -76,44 +76,53 @@ interface Props {
 
 export function ResultsView({ medicineId, query }: Props) {
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<SearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [storePanelOpen, setStorePanelOpen] = useState(false);
   const { location } = useLocation();
+  const cancelledRef = useRef(false);
+
+  const runSearch = useCallback(
+    async (opts: { refresh?: boolean } = {}) => {
+      const params = new URLSearchParams();
+      if (medicineId) params.set("medicineId", medicineId);
+      else if (query) params.set("q", query);
+      if (location?.pincode) params.set("pincode", location.pincode);
+      if (opts.refresh) params.set("refresh", "1");
+
+      if (opts.refresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+        setData(null);
+      }
+      setError(null);
+
+      try {
+        const r = await fetch(`/api/search?${params}`);
+        if (!r.ok) throw new Error(`Search failed: ${r.status}`);
+        const d: SearchResponse = await r.json();
+        if (!cancelledRef.current) setData(d);
+      } catch (err: any) {
+        if (!cancelledRef.current) setError(err?.message ?? "Search failed");
+      } finally {
+        if (!cancelledRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [medicineId, query, location?.pincode]
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setData(null);
-
-    const params = new URLSearchParams();
-    if (medicineId) params.set("medicineId", medicineId);
-    else if (query) params.set("q", query);
-    if (location?.pincode) params.set("pincode", location.pincode);
-
-    fetch(`/api/search?${params}`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`Search failed: ${r.status}`);
-        return r.json();
-      })
-      .then((d: SearchResponse) => {
-        if (!cancelled) {
-          setData(d);
-          setLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err.message ?? "Search failed");
-          setLoading(false);
-        }
-      });
-
+    cancelledRef.current = false;
+    runSearch();
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
     };
-  }, [medicineId, query, location?.pincode]);
+  }, [runSearch]);
 
   const [showOos, setShowOos] = useState(false);
 
@@ -173,9 +182,23 @@ export function ResultsView({ medicineId, query }: Props) {
             animate={{ opacity: 1, y: 0 }}
             className="mb-6"
           >
-            <h1 className="font-display font-bold text-3xl md:text-4xl tracking-tight">
-              {medicine.brandName ?? medicine.name}
-            </h1>
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="font-display font-bold text-3xl md:text-4xl tracking-tight">
+                {medicine.brandName ?? medicine.name}
+              </h1>
+              <button
+                onClick={() => runSearch({ refresh: true })}
+                disabled={refreshing}
+                title="Force fresh scrape (bypass cache)"
+                className="shrink-0 mt-1 flex items-center gap-1.5 text-xs text-text-secondary hover:text-white px-2.5 py-1.5 rounded-full border border-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <RefreshCw
+                  size={12}
+                  className={refreshing ? "animate-spin" : ""}
+                />
+                {refreshing ? "Refreshing" : "Refresh"}
+              </button>
+            </div>
             <div className="flex flex-wrap items-center gap-2 mt-2">
               {medicine.dosageForm && (
                 <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300">

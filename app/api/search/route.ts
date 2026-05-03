@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
   const queryParam = req.nextUrl.searchParams.get("q")?.trim();
   const inputMethod = req.nextUrl.searchParams.get("method") ?? "text";
   const pincode = req.nextUrl.searchParams.get("pincode") ?? null;
+  const refresh = req.nextUrl.searchParams.get("refresh") === "1";
 
   if (!medicineIdParam && !queryParam) {
     return NextResponse.json(
@@ -109,7 +110,18 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  if (cachedMed && cachedMed.listings.length > 0) {
+  // Manual refresh: drop cached listings for this medicine+pincode scope so
+  // the live scrape that follows doesn't get diluted with stale rows.
+  if (refresh) {
+    await prisma.pharmacyListing.deleteMany({
+      where: {
+        medicineId: medRow.id,
+        pincode: pincode ?? null,
+      },
+    });
+  }
+
+  if (!refresh && cachedMed && cachedMed.listings.length > 0) {
     const newest = cachedMed.listings.reduce(
       (max: number, l: any) =>
         Math.max(max, new Date(l.scrapedAt).getTime()),
