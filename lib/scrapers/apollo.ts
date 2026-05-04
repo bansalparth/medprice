@@ -111,8 +111,15 @@ export async function scrape(
           discountPercent = Math.round(((mrp - sellingPrice) / mrp) * 100);
         }
 
+        // Apollo's product cards sometimes contain secondary "Shop similar"
+        // anchors that point to a different SKU than the H2 product. Prefer
+        // the anchor that wraps the H2 (the canonical product link).
+        const h2El = h2s[0] as HTMLElement | undefined;
+        const wrappingAnchor = h2El?.closest("a") as HTMLAnchorElement | null;
         const link =
-          (card.querySelector("a") as HTMLAnchorElement | null)?.href ?? "";
+          wrappingAnchor?.href ??
+          (card.querySelector("a") as HTMLAnchorElement | null)?.href ??
+          "";
 
         const outOfStock =
           /out\s*of\s*stock|not\s+available\s+for\s+online\s+sale|currently\s+unavailable|not\s+serviceable|discontinued|sold\s+out/i.test(allText) ||

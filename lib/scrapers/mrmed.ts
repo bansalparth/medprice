@@ -26,22 +26,22 @@ interface MrMedResponse {
 
 export async function scrape(
   query: string,
-  pincode?: string | null
+  _pincode?: string | null
 ): Promise<ScrapedListing[]> {
-  let url =
+  // MrMed's API returns national pricing — pincode/x-pincode have no effect.
+  const url =
     "https://api.mrmeds.in/product/v2/search" +
     `?searchText=${encodeURIComponent(query)}&page=1&limit=20`;
-  if (pincode) url += `&pincode=${pincode}`;
-
-  const headers: Record<string, string> = {
-    referer: "https://www.mrmed.in/",
-    origin: "https://www.mrmed.in",
-  };
-  if (pincode) headers["x-pincode"] = pincode;
 
   let json: MrMedResponse;
   try {
-    json = await fetchJson<MrMedResponse>(url, { headers, timeoutMs: 8000 });
+    json = await fetchJson<MrMedResponse>(url, {
+      headers: {
+        referer: "https://www.mrmed.in/",
+        origin: "https://www.mrmed.in",
+      },
+      timeoutMs: 8000,
+    });
   } catch {
     return [];
   }

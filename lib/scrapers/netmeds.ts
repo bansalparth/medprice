@@ -5,6 +5,7 @@ interface NMItem {
   type?: string;
   name?: string;
   slug?: string;
+  url?: string;
   uid?: string | number;
   item_code?: string | number;
   brand?: { name?: string };
@@ -25,14 +26,15 @@ interface NMItem {
 
 export async function scrape(
   query: string,
-  pincode?: string | null
+  _pincode?: string | null
 ): Promise<ScrapedListing[]> {
+  // Netmeds' search endpoint returns national pricing regardless of any
+  // location cookies (verified: pincode/deliveryPincode cookies ignored).
   const url = `https://www.netmeds.com/products?q=${encodeURIComponent(query)}`;
-  const headers: Record<string, string> = { referer: "https://www.netmeds.com/" };
-  if (pincode) {
-    headers.cookie = `pincode=${pincode}; deliveryPincode=${pincode}`;
-  }
-  const html = await fetchText(url, { headers, timeoutMs: 10000 });
+  const html = await fetchText(url, {
+    headers: { referer: "https://www.netmeds.com/" },
+    timeoutMs: 10000,
+  });
 
   const jsonStr = extractJsonAssignment(html, "window.__INITIAL_STATE__=");
   if (!jsonStr) return [];
@@ -59,9 +61,12 @@ export async function scrape(
         ? Math.round(((mrp - sellingPrice) / mrp) * 100)
         : undefined;
 
-      const slug = it.slug ?? "";
-      const productUrl = slug
-        ? `https://www.netmeds.com/prescriptions/${slug}`
+      // Netmeds' JSON exposes the canonical path in `url` (e.g.
+      // "/product/dolo-650-tablet-15s-..."). Fall back to building a path
+      // from the slug only if `url` is missing.
+      const path = it.url ?? (it.slug ? `/product/${it.slug}` : "");
+      const productUrl = path
+        ? `https://www.netmeds.com${path.startsWith("/") ? "" : "/"}${path}`
         : `https://www.netmeds.com/products?q=${encodeURIComponent(query)}`;
 
       const sellable = it.sellable !== false;

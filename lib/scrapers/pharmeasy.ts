@@ -19,14 +19,16 @@ interface PEItem {
 
 export async function scrape(
   query: string,
-  pincode?: string | null
+  _pincode?: string | null
 ): Promise<ScrapedListing[]> {
+  // PharmEasy's search endpoint returns national pricing regardless of any
+  // location cookies (verified: pincode/_cg/user_pincode all ignored — server
+  // always responds with default Mumbai context). Pincode is therefore unused.
   const url = `https://pharmeasy.in/search/all?name=${encodeURIComponent(query)}`;
-  const headers: Record<string, string> = { referer: "https://pharmeasy.in/" };
-  if (pincode) {
-    headers.cookie = `user_pincode=${pincode}; pincode=${pincode}`;
-  }
-  const html = await fetchText(url, { headers, timeoutMs: 8000 });
+  const html = await fetchText(url, {
+    headers: { referer: "https://pharmeasy.in/" },
+    timeoutMs: 8000,
+  });
 
   const jsonStr = extractJsonAssignment(
     html,

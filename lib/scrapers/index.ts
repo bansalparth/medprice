@@ -29,16 +29,12 @@ const SCRAPERS: ScraperEntry[] = [
 
 /**
  * Pharmacies whose search results / stock badges actually change with the
- * pincode we set. Used in the UI to flag which prices are truly
- * pincode-aware vs national list pricing.
+ * pincode we set. Verified empirically: PharmEasy/Netmeds/1mg/TrueMeds search
+ * APIs return identical national pricing regardless of cookies/city/zone.
+ * Only Apollo's browser scraper (cookie-injected pincode) reflects true
+ * location-specific stock and pricing.
  */
-export const PINCODE_AWARE_PHARMACIES = new Set([
-  "1mg",
-  "truemeds",
-  "apollo",
-  "pharmeasy",
-  "netmeds",
-]);
+export const PINCODE_AWARE_PHARMACIES = new Set(["apollo"]);
 
 // Hard ceiling per pharmacy — if one site hangs, fail it fast so the rest
 // of the scrape completes within the function's wall-clock budget.

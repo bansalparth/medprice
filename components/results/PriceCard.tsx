@@ -12,17 +12,17 @@ const PHARMACY_LABELS: Record<
   "1mg": {
     label: "1mg",
     color: "bg-red-500/10 text-red-300 border-red-500/20",
-    pincodeAware: true,
+    pincodeAware: false,
   },
   netmeds: {
     label: "Netmeds",
     color: "bg-blue-500/10 text-blue-300 border-blue-500/20",
-    pincodeAware: true,
+    pincodeAware: false,
   },
   pharmeasy: {
     label: "PharmEasy",
     color: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",
-    pincodeAware: true,
+    pincodeAware: false,
   },
   apollo: {
     label: "Apollo",
@@ -32,7 +32,7 @@ const PHARMACY_LABELS: Record<
   truemeds: {
     label: "Truemeds",
     color: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",
-    pincodeAware: true,
+    pincodeAware: false,
   },
   mrmed: {
     label: "MrMed",

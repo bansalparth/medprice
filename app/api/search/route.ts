@@ -660,11 +660,17 @@ function dedupePerPharmacy(
       best.set(l.pharmacyName, l);
       bestScore.set(l.pharmacyName, sc);
     } else if (sc === cur) {
-      // Tie-break on price.
+      // Tie-break: prefer in-stock first, then lower price. Picking a cheap
+      // OOS SKU over an in-stock equivalent leaves the user staring at "Out
+      // of stock" when the pharmacy actually has it.
       const curListing = best.get(l.pharmacyName)!;
       const curPrice = curListing.sellingPrice ?? curListing.mrp ?? Infinity;
       const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
-      if (newPrice < curPrice) best.set(l.pharmacyName, l);
+      if (l.inStock && !curListing.inStock) {
+        best.set(l.pharmacyName, l);
+      } else if (l.inStock === curListing.inStock && newPrice < curPrice) {
+        best.set(l.pharmacyName, l);
+      }
     }
   }
   return Array.from(best.values());
