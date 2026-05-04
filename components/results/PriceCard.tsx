@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Crown, ExternalLink, Package, Truck } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "@/lib/location-context";
+import { etaToDateLabel } from "@/lib/delivery";
 
 const PHARMACY_LABELS: Record<
   string,
@@ -12,7 +13,7 @@ const PHARMACY_LABELS: Record<
   "1mg": {
     label: "1mg",
     color: "bg-red-500/10 text-red-300 border-red-500/20",
-    pincodeAware: false,
+    pincodeAware: true,
   },
   netmeds: {
     label: "Netmeds",
@@ -53,6 +54,8 @@ interface PriceCardProps {
     inStock: boolean;
     productUrl?: string | null;
     deliveryEta?: string | null;
+    serviceable?: boolean | null;
+    locationPrice?: number | null;
   };
   medicineId: string;
   isCheapest?: boolean;
@@ -74,6 +77,17 @@ export function PriceCard({
   const buyHref = `/api/go/${listing.pharmacyName}/${medicineId}${
     location?.pincode ? `?pincode=${location.pincode}` : ""
   }`;
+
+  // Convert static ETA string to a concrete date label when possible
+  const deliveryLabel = listing.deliveryEta
+    ? etaToDateLabel(listing.deliveryEta)
+    : null;
+
+  // Show location-specific price when it differs from the search-level price
+  const displayPrice = listing.locationPrice ?? listing.sellingPrice ?? listing.mrp;
+  const displayMrp = listing.mrp;
+  const isLocationPrice = listing.locationPrice != null && listing.locationPrice !== listing.sellingPrice;
+  const notServiceable = listing.serviceable === false;
 
   return (
     <motion.div
@@ -113,24 +127,33 @@ export function PriceCard({
                 <Package size={11} /> {listing.packSize}
               </span>
             )}
-            {listing.inStock && listing.deliveryEta && (
-              <span className="flex items-center gap-1 text-emerald-300/90">
-                <Truck size={11} /> {listing.deliveryEta}
+            {notServiceable ? (
+              <span className="flex items-center gap-1 text-red-400/90">
+                <Truck size={11} /> Not available at your pincode
               </span>
-            )}
+            ) : listing.inStock && deliveryLabel ? (
+              <span className="flex items-center gap-1 text-emerald-300/90">
+                <Truck size={11} /> {deliveryLabel}
+              </span>
+            ) : null}
           </div>
         </div>
 
         <div className="flex items-center justify-between md:justify-end gap-4 md:w-72">
           <div className="text-right">
-            {listing.mrp && listing.sellingPrice && listing.mrp > listing.sellingPrice && (
+            {displayMrp && displayPrice && displayMrp > displayPrice && (
               <div className="text-xs text-text-muted line-through">
-                {formatCurrency(listing.mrp)}
+                {formatCurrency(displayMrp)}
               </div>
             )}
             <div className="font-display font-bold text-lg">
-              {formatCurrency(listing.sellingPrice ?? listing.mrp)}
+              {formatCurrency(displayPrice)}
             </div>
+            {isLocationPrice && location?.pincode && (
+              <div className="text-[10px] text-purple-300/80 font-medium">
+                at {location.pincode}
+              </div>
+            )}
             {listing.discountPercent && listing.discountPercent > 0 && (
               <div className="text-[11px] text-accent-green font-medium">
                 {listing.discountPercent}% off

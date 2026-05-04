@@ -5,6 +5,7 @@ import { findJanAushadhiMatch } from "@/lib/jan-aushadhi/matcher";
 import { normalizeMedicineName } from "@/lib/utils";
 import { estimateDelivery } from "@/lib/delivery";
 import { lookupDrugDetail } from "@/lib/drug-details";
+import { checkAll as checkServiceability } from "@/lib/scrapers/serviceability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -91,18 +92,16 @@ export async function GET(req: NextRequest) {
     : medRow.name;
 
   // Check cached listings — pincode-aware so different cities don't collide.
-  // We pull anything within the STALE window in one query so we can decide
-  // fresh-vs-stale-vs-miss without a second round trip.
+  // When a pincode is supplied, ONLY serve pincode-specific listings (not the
+  // national/null ones).  National listings may have stale prices (e.g. 1mg
+  // prices differ between Delhi and Mumbai) and would suppress a fresh scrape.
   const cachedMed = await prisma.medicine.findUnique({
     where: { id: medRow.id },
     include: {
       listings: {
         where: {
           scrapedAt: { gte: new Date(Date.now() - STALE_TTL_MS) },
-          OR: [
-            { pincode: pincode ?? undefined },
-            { pincode: null },
-          ],
+          pincode: pincode ?? null,
         },
         orderBy: [{ inStock: "desc" }, { sellingPrice: "asc" }],
       },
@@ -110,13 +109,12 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  // Manual refresh: drop cached listings for this medicine+pincode scope so
-  // the live scrape that follows doesn't get diluted with stale rows.
+  // Manual refresh: drop ALL cached listings for this medicine so the live
+  // scrape is not diluted with stale rows from any pincode scope.
   if (refresh) {
     await prisma.pharmacyListing.deleteMany({
       where: {
         medicineId: medRow.id,
-        pincode: pincode ?? null,
       },
     });
   }
@@ -501,6 +499,37 @@ async function persistScrapeResults(
     return { relevantCount: 0 };
   }
 
+  // Per-product serviceability checks: for each deduplicated listing, hit the
+  // pharmacy's product page to get real stock status and refresh pricing.
+  // Runs only when the user provided a pincode (otherwise there's nothing to
+  // check). Parallel with a hard 2.5 s timeout per pharmacy; falls back to the
+  // static estimate from lib/delivery.ts on error or timeout.
+  let svcResults: Awaited<ReturnType<typeof checkServiceability>> | null = null;
+  if (pincode) {
+    try {
+      svcResults = await checkServiceability(relevantScraped, pincode);
+    } catch (e) {
+      console.error("[serviceability] checkAll failed:", (e as Error).message);
+    }
+  }
+
+  // Merge serviceability results back into the listings so the DB row reflects
+  // real stock and, where available, location-specific pricing.
+  if (svcResults) {
+    relevantScraped = relevantScraped.map((s) => {
+      const svc = svcResults!.get(s.pharmacyName);
+      if (!svc) return s;
+      return {
+        ...s,
+        inStock: svc.inStock,
+        // For pharmacies that return a location-specific price (e.g. 1mg Delhi
+        // vs Mumbai), prefer it over the national search price.
+        sellingPrice: svc.price ?? s.sellingPrice,
+        mrp: svc.mrp ?? s.mrp,
+      };
+    });
+  }
+
   // Update saltComposition. For catalog entries we trust the curated value
   // and never overwrite it. For non-catalog entries the existing value may
   // be stale/wrong (e.g., from a prior scrape that picked up a cross-sell
@@ -536,11 +565,20 @@ async function persistScrapeResults(
   await prisma.pharmacyListing.deleteMany({ where: { medicineId: medRow.id } });
   await prisma.pharmacyListing.createMany({
     data: relevantScraped.map((s) => {
-      const eta = estimateDelivery(s.pharmacyName, pincode);
+      const svc = svcResults?.get(s.pharmacyName);
+      const eta = svc
+        ? { eta: svc.deliveryEta ?? estimateDelivery(s.pharmacyName, pincode).eta, serviceable: svc.serviceable }
+        : estimateDelivery(s.pharmacyName, pincode);
       // Listings without ANY price are not buyable, regardless of what the
       // scraper detected — discontinued / not-for-online-sale products on
       // pharmacy sites often hide the price entirely.
       const hasPrice = s.sellingPrice != null || s.mrp != null;
+      // locationPrice: the price from the serviceability check if it differs
+      // from the search-API price (indicates per-pincode pricing, e.g. 1mg).
+      const locationPrice =
+        svc?.price != null && svc.price !== s.sellingPrice
+          ? svc.price
+          : null;
       return {
         medicineId: medRow!.id,
         pharmacyName: s.pharmacyName,
@@ -555,6 +593,8 @@ async function persistScrapeResults(
         inStock: s.inStock && eta.serviceable && hasPrice,
         productUrl: s.productUrl,
         deliveryEta: eta.eta,
+        serviceable: eta.serviceable,
+        locationPrice,
         pincode: pincode ?? null,
       };
     }),

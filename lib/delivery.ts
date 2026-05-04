@@ -104,3 +104,62 @@ export function estimateDelivery(
   const cls = classifyPincode(pincode);
   return profile[cls];
 }
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/**
+ * Convert a static ETA string ("Tomorrow", "2-3 days", etc.) into a
+ * human-readable date label anchored to today's date.
+ *
+ * Examples (today = Mon 5 May):
+ *   "Tomorrow"   → "Tue, May 6"
+ *   "2-3 days"   → "Wed–Thu, May 7–8"
+ *   "4-6 days"   → "Fri–Sun, May 9–11"
+ */
+export function etaToDateLabel(eta: string): string {
+  const now = new Date();
+
+  const addDays = (n: number) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() + n);
+    return d;
+  };
+
+  const fmt = (d: Date) =>
+    `${DAY_NAMES[d.getDay()]}, ${MONTH_NAMES[d.getMonth()]} ${d.getDate()}`;
+
+  // "Today / Tomorrow" → show both options
+  if (/today.*tomorrow/i.test(eta)) {
+    const tom = addDays(1);
+    return `Today or ${DAY_NAMES[tom.getDay()]}, ${MONTH_NAMES[tom.getMonth()]} ${tom.getDate()}`;
+  }
+
+  // "Tomorrow" → next day
+  if (/^tomorrow$/i.test(eta.trim())) {
+    return fmt(addDays(1));
+  }
+
+  // "1-2 days", "2-3 days", "4-6 days", "5-7 days", etc.
+  const rangeMatch = eta.match(/^(\d+)\s*[-–]\s*(\d+)\s*days?$/i);
+  if (rangeMatch) {
+    const lo = parseInt(rangeMatch[1]);
+    const hi = parseInt(rangeMatch[2]);
+    const dLo = addDays(lo);
+    const dHi = addDays(hi);
+    if (lo === hi - 1 || lo === hi) {
+      return `${fmt(dLo)}–${DAY_NAMES[dHi.getDay()]} ${dHi.getDate()}`;
+    }
+    return `${DAY_NAMES[dLo.getDay()]}–${DAY_NAMES[dHi.getDay()]}, ${MONTH_NAMES[dLo.getMonth()]} ${dLo.getDate()}–${dHi.getDate()}`;
+  }
+
+  // Single "3 days" or "5 days"
+  const singleMatch = eta.match(/^(\d+)\s*days?$/i);
+  if (singleMatch) {
+    return fmt(addDays(parseInt(singleMatch[1])));
+  }
+
+  // Fallback: return raw string
+  return eta;
+}
+

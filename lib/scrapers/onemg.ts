@@ -49,11 +49,14 @@ export async function scrape(
     `&city=${encodeURIComponent(city)}` +
     "&types=sku&page=1&per_page=15";
 
+  const headers: Record<string, string> = {
+    referer: "https://www.1mg.com/",
+    "x-city": city,
+  };
+  if (pincode) headers["x-pincode"] = pincode;
+
   const json = await fetchJson<OneMgResponse>(url, {
-    headers: {
-      referer: "https://www.1mg.com/",
-      "x-city": city,
-    },
+    headers,
     timeoutMs: 8000,
   });
 

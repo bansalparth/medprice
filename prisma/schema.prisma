@@ -69,6 +69,10 @@ model PharmacyListing {
   productUrl      String?
   // Estimated delivery ETA for the requested pincode, e.g. "Tomorrow", "2-3 days"
   deliveryEta     String?
+  // Whether this pharmacy can deliver to the scraped pincode
+  serviceable     Boolean  @default(true)
+  // Location-specific selling price (may differ from national sellingPrice for 1mg/Apollo)
+  locationPrice   Float?
   // Pincode this listing was last scraped against (delivery + stock are pincode-specific)
   pincode         String?
   scrapedAt       DateTime @default(now())

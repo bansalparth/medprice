@@ -28,13 +28,16 @@ const SCRAPERS: ScraperEntry[] = [
 ];
 
 /**
- * Pharmacies whose search results / stock badges actually change with the
- * pincode we set. Verified empirically: PharmEasy/Netmeds/1mg/TrueMeds search
- * APIs return identical national pricing regardless of cookies/city/zone.
- * Only Apollo's browser scraper (cookie-injected pincode) reflects true
- * location-specific stock and pricing.
+ * Pharmacies whose search results actually change with the pincode/city we
+ * pass. Verified empirically:
+ *   - 1mg:    city + x-pincode headers → different discounted prices per city
+ *             (e.g. Delhi ₹28.7 vs Mumbai ₹30.6 for Dolo 650). Confirmed by
+ *             curl tests 2026-05-05.
+ *   - Apollo: cookie-injected pincode → location-specific stock and pricing.
+ *   - PharmEasy/Netmeds/TrueMeds: search APIs return national pricing only.
+ *   - MrMed:  national API, no location support.
  */
-export const PINCODE_AWARE_PHARMACIES = new Set(["apollo"]);
+export const PINCODE_AWARE_PHARMACIES = new Set(["1mg", "apollo"]);
 
 // Hard ceiling per pharmacy — if one site hangs, fail it fast so the rest
 // of the scrape completes within the function's wall-clock budget.
