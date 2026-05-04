@@ -1,5 +1,6 @@
 import { fetchJson, parsePrice } from "./http";
 import type { ScrapedListing } from "./types";
+import { pincodeToCity } from "@/lib/pincode";
 
 interface OneMgResult {
   id: string | number;
@@ -32,20 +33,9 @@ interface OneMgResponse {
   data?: { search_results?: OneMgResult[] };
 }
 
-const PINCODE_TO_CITY: Record<string, string> = {
-  "400": "Mumbai",
-  "560": "Bangalore",
-  "110": "Delhi",
-  "600": "Chennai",
-  "700": "Kolkata",
-  "500": "Hyderabad",
-  "411": "Pune",
-};
-
 function cityFor(pincode?: string | null): string {
   if (!pincode) return "Mumbai";
-  const prefix = pincode.slice(0, 3);
-  return PINCODE_TO_CITY[prefix] ?? "Mumbai";
+  return pincodeToCity(pincode);
 }
 
 export async function scrape(

@@ -2,12 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, Pill, FileWarning, ShieldX, Stethoscope, AlertTriangle, Info, Thermometer, ChevronDown, RefreshCw } from "lucide-react";
+import { AlertCircle, Pill, ShieldX, Stethoscope, ChevronDown, RefreshCw } from "lucide-react";
 import { PriceCard } from "./PriceCard";
 import { JanAushadhiCard } from "./JanAushadhiCard";
 import { StoreLocatorPanel } from "./StoreLocatorPanel";
-import { PriceHistoryChart } from "./PriceHistoryChart";
-import { Alternatives } from "./Alternatives";
 import { SearchProgress } from "./SearchProgress";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "@/lib/location-context";
@@ -346,54 +344,6 @@ export function ResultsView({ medicineId, query }: Props) {
             )}
           </div>
 
-          {medicine.drugDetail && (
-            <div className="mt-8 glass-card p-6">
-              <h2 className="font-display font-bold text-lg mb-4 flex items-center gap-2">
-                <Info size={16} className="text-purple-300" /> About this medicine
-              </h2>
-              <div className="grid md:grid-cols-2 gap-5 text-sm">
-                {medicine.drugDetail.uses && (
-                  <Section icon={<Pill size={13} className="text-purple-300" />} title="Uses">
-                    {medicine.drugDetail.uses}
-                  </Section>
-                )}
-                {medicine.drugDetail.howItWorks && (
-                  <Section icon={<Info size={13} className="text-purple-300" />} title="How it works">
-                    {medicine.drugDetail.howItWorks}
-                  </Section>
-                )}
-                {medicine.drugDetail.sideEffects && (
-                  <Section icon={<AlertTriangle size={13} className="text-amber-300" />} title="Common side effects">
-                    {medicine.drugDetail.sideEffects}
-                  </Section>
-                )}
-                {medicine.drugDetail.warnings && (
-                  <Section icon={<FileWarning size={13} className="text-red-300" />} title="Warnings">
-                    {medicine.drugDetail.warnings}
-                  </Section>
-                )}
-                {medicine.drugDetail.storage && (
-                  <Section icon={<Thermometer size={13} className="text-cyan-300" />} title="Storage">
-                    {medicine.drugDetail.storage}
-                  </Section>
-                )}
-              </div>
-              <p className="mt-5 text-[11px] text-text-muted leading-relaxed border-t border-white/5 pt-3">
-                Educational information only — not a substitute for advice from a
-                qualified doctor or pharmacist.
-              </p>
-            </div>
-          )}
-
-          {listings.length > 0 && (
-            <div className="mt-8 space-y-6">
-              <PriceHistoryChart medicineId={medicine.id} />
-              <Alternatives
-                medicineId={medicine.id}
-                saltComposition={medicine.saltComposition}
-              />
-            </div>
-          )}
         </>
       )}
 
@@ -401,25 +351,6 @@ export function ResultsView({ medicineId, query }: Props) {
         open={storePanelOpen}
         onClose={() => setStorePanelOpen(false)}
       />
-    </div>
-  );
-}
-
-function Section({
-  icon,
-  title,
-  children,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="text-[11px] uppercase tracking-wider text-text-muted flex items-center gap-1.5 mb-1">
-        {icon} {title}
-      </div>
-      <div className="text-text-secondary leading-relaxed">{children}</div>
     </div>
   );
 }

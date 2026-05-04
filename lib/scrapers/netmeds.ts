@@ -25,16 +25,14 @@ interface NMItem {
 
 export async function scrape(
   query: string,
-  _pincode?: string | null
+  pincode?: string | null
 ): Promise<ScrapedListing[]> {
-  // Netmeds is a Vue.js app that hydrates from window.__INITIAL_STATE__
-  // embedded in the HTML. The /products?q= route is server-rendered and
-  // includes the search results in that state object.
   const url = `https://www.netmeds.com/products?q=${encodeURIComponent(query)}`;
-  const html = await fetchText(url, {
-    headers: { referer: "https://www.netmeds.com/" },
-    timeoutMs: 10000,
-  });
+  const headers: Record<string, string> = { referer: "https://www.netmeds.com/" };
+  if (pincode) {
+    headers.cookie = `pincode=${pincode}; deliveryPincode=${pincode}`;
+  }
+  const html = await fetchText(url, { headers, timeoutMs: 10000 });
 
   const jsonStr = extractJsonAssignment(html, "window.__INITIAL_STATE__=");
   if (!jsonStr) return [];

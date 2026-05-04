@@ -32,7 +32,7 @@ const PHARMACY_LABELS: Record<
   truemeds: {
     label: "Truemeds",
     color: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",
-    pincodeAware: false,
+    pincodeAware: true,
   },
   mrmed: {
     label: "MrMed",

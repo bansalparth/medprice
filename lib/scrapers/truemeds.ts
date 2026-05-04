@@ -1,5 +1,6 @@
 import { fetchJson, parsePrice } from "./http";
 import type { ScrapedListing } from "./types";
+import { pincodeToStateCode } from "@/lib/pincode";
 
 interface TMProduct {
   skuName?: string;
@@ -19,24 +20,9 @@ interface TMResponse {
   };
 }
 
-// Map pincode prefix → Truemeds zone code (Maharashtra default covers Mumbai).
-// Without a zone param the API returns 0 results for non-Indian IPs.
-const PINCODE_TO_ZONE: Record<string, string> = {
-  "110": "DL", // Delhi
-  "400": "MH", // Mumbai
-  "500": "TS", // Hyderabad
-  "560": "KA", // Bangalore
-  "600": "TN", // Chennai
-  "700": "WB", // Kolkata
-  "411": "MH", // Pune
-};
-
 function zoneFor(pincode?: string | null): string {
-  if (pincode) {
-    const zone = PINCODE_TO_ZONE[pincode.slice(0, 3)];
-    if (zone) return zone;
-  }
-  return "MH"; // default: Maharashtra/Mumbai
+  if (!pincode) return "MH";
+  return pincodeToStateCode(pincode);
 }
 
 export async function scrape(

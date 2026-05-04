@@ -33,9 +33,11 @@ const SCRAPERS: ScraperEntry[] = [
  * pincode-aware vs national list pricing.
  */
 export const PINCODE_AWARE_PHARMACIES = new Set([
+  "1mg",
+  "truemeds",
+  "apollo",
   "pharmeasy",
   "netmeds",
-  "apollo",
 ]);
 
 // Hard ceiling per pharmacy — if one site hangs, fail it fast so the rest

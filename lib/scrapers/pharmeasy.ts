@@ -19,16 +19,14 @@ interface PEItem {
 
 export async function scrape(
   query: string,
-  _pincode?: string | null
+  pincode?: string | null
 ): Promise<ScrapedListing[]> {
-  // PharmEasy renders search results server-side and embeds them in
-  // window.__NEXT_DATA__. We can fetch the HTML and parse the JSON blob
-  // without running a browser.
   const url = `https://pharmeasy.in/search/all?name=${encodeURIComponent(query)}`;
-  const html = await fetchText(url, {
-    headers: { referer: "https://pharmeasy.in/" },
-    timeoutMs: 8000,
-  });
+  const headers: Record<string, string> = { referer: "https://pharmeasy.in/" };
+  if (pincode) {
+    headers.cookie = `user_pincode=${pincode}; pincode=${pincode}`;
+  }
+  const html = await fetchText(url, { headers, timeoutMs: 8000 });
 
   const jsonStr = extractJsonAssignment(
     html,
