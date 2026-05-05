@@ -87,9 +87,33 @@ export async function GET(req: NextRequest) {
       // Catalog wins ties
       if (a.isCatalog !== b.isCatalog) return a.isCatalog ? -1 : 1;
       return a.name.length - b.name.length;
-    })
+    });
+
+  // Deduplicate results that appear identical in the UI.
+  // Key = lowercase display text (brandName ?? name). When two results
+  // produce the same display, the first one (higher score) wins.
+  // Also collapse strength variants (e.g. "crocin advance" vs
+  // "crocin advance 500mg tablet") but NOT different drugs
+  // (e.g. "aztor" and "aztor asp" stay separate).
+  const seen: string[] = [];
+  const isStrengthVariant = (shorter: string, longer: string) => {
+    const rest = longer.slice(shorter.length).trim();
+    return /^\d/.test(rest);
+  };
+  const deduped = scored.filter((m) => {
+    const display = (m.brandName ?? m.name).toLowerCase().trim();
+    if (seen.includes(display)) return false;
+    for (const s of seen) {
+      if (display.startsWith(s) && isStrengthVariant(s, display)) return false;
+      if (s.startsWith(display) && isStrengthVariant(display, s)) return false;
+    }
+    seen.push(display);
+    return true;
+  });
+
+  const final = deduped
     .slice(0, limit)
     .map(({ score: _s, ...rest }) => rest);
 
-  return NextResponse.json({ results: scored });
+  return NextResponse.json({ results: final });
 }
