@@ -221,7 +221,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-medium truncate flex items-center gap-2">
-                      <span>{s.brandName ?? s.name}</span>
+                      <span>{s.name}</span>
                       {s.dosageForm && (
                         <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-text-secondary">
                           {s.dosageForm}
