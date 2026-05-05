@@ -15,6 +15,8 @@
     "seed:catalog": "tsx scripts/seed-medicines-catalog.ts",
     "seed:medicines": "tsx scripts/preseed-medicines.ts",
     "import-csv": "tsx scripts/import-medicines-from-csv.ts",
+    "import-1mg": "tsx scripts/import-1mg-dataset.ts",
+    "enrich-medicines": "tsx scripts/enrich-medicines.ts",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
