@@ -7,6 +7,8 @@ import { PriceCard } from "./PriceCard";
 import { JanAushadhiCard } from "./JanAushadhiCard";
 import { StoreLocatorPanel } from "./StoreLocatorPanel";
 import { SearchProgress } from "./SearchProgress";
+import { DrugInfo } from "./DrugInfo";
+import { Alternatives } from "./Alternatives";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "@/lib/location-context";
 
@@ -55,6 +57,8 @@ interface MedicineData {
   packSize?: string | null;
   saltComposition?: string | null;
   category?: string | null;
+  description?: string | null;
+  ingredients?: string | null;
   listings: Listing[];
   saltMappings: SaltMapping[];
   drugDetail?: DrugDetail | null;
@@ -343,6 +347,27 @@ export function ResultsView({ medicineId, query }: Props) {
               </div>
             )}
           </div>
+
+          {/* Drug Information ("About") Section */}
+          <DrugInfo
+            manufacturer={medicine.manufacturer}
+            saltComposition={medicine.saltComposition}
+            ingredients={medicine.ingredients}
+            category={medicine.category}
+            description={medicine.description}
+            uses={medicine.drugDetail?.uses}
+            howItWorks={medicine.drugDetail?.howItWorks}
+            sideEffects={medicine.drugDetail?.sideEffects}
+            warnings={medicine.drugDetail?.warnings}
+            storage={medicine.drugDetail?.storage}
+          />
+
+          {/* Alternatives Section */}
+          <Alternatives
+            medicineId={medicine.id}
+            saltComposition={medicine.saltComposition}
+            cheapestPharmacy={cheapest?.pharmacyName ?? null}
+          />
 
         </>
       )}

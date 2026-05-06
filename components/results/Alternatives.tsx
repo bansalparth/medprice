@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, Beaker, ShieldAlert } from "lucide-react";
+import { ArrowRight, Beaker, ShieldAlert, FlaskConical, FileText } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
 interface Alt {
@@ -12,63 +12,94 @@ interface Alt {
   brandName: string | null;
   manufacturer: string | null;
   saltComposition: string | null;
-  ingredients: string[];
   dosageForm: string | null;
   packSize: string | null;
   similarity: number;
-  sharedIngredients: string[];
+  matchType: "ingredient" | "salt" | "substitute";
   cheapestPharmacy: string | null;
   cheapestPrice: number | null;
 }
 
 interface Resp {
-  mode: "ingredients" | "salt-fallback" | "none";
+  mode: "ingredients" | "salt-match" | "substitutes" | "none";
   ingredients: string[];
   saltComposition: string | null;
+  pharmacy: string | null;
   alternatives: Alt[];
   disclaimer: string;
+}
+
+function matchLabel(alt: Alt): { text: string; className: string } {
+  if (alt.matchType === "ingredient") {
+    const pct = Math.round(alt.similarity * 100);
+    return pct === 100
+      ? { text: "Identical", className: "bg-emerald-500/15 text-emerald-300" }
+      : { text: `${pct}% match`, className: "bg-purple-500/15 text-purple-300" };
+  }
+  if (alt.matchType === "salt") {
+    return { text: "Same composition", className: "bg-blue-500/15 text-blue-300" };
+  }
+  return { text: "Suggested", className: "bg-amber-500/15 text-amber-300" };
+}
+
+function modeIcon(mode: string) {
+  if (mode === "salt-match") return <FlaskConical size={18} className="text-blue-300" />;
+  if (mode === "substitutes") return <FileText size={18} className="text-amber-300" />;
+  return <Beaker size={18} className="text-purple-300" />;
+}
+
+function modeTitle(mode: string) {
+  if (mode === "salt-match") return "Alternatives (same composition)";
+  if (mode === "substitutes") return "Suggested alternatives";
+  return "Alternatives by ingredient";
 }
 
 export function Alternatives({
   medicineId,
   saltComposition,
+  cheapestPharmacy,
 }: {
   medicineId: string;
   saltComposition?: string | null;
+  cheapestPharmacy?: string | null;
 }) {
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/alternatives/${medicineId}`)
+    const params = new URLSearchParams();
+    if (cheapestPharmacy) params.set("pharmacy", cheapestPharmacy);
+    fetch(`/api/alternatives/${medicineId}?${params}`)
       .then((r) => r.json())
       .then(setData)
       .finally(() => setLoading(false));
-  }, [medicineId]);
+  }, [medicineId, cheapestPharmacy]);
 
   if (loading) {
     return (
-      <div className="glass-card p-6">
+      <div className="glass-card p-6 mt-5">
         <div className="skeleton h-5 w-48 mb-4" />
         <div className="space-y-2">
-          <div className="skeleton h-12 w-full" />
-          <div className="skeleton h-12 w-full" />
+          <div className="skeleton h-14 w-full" />
+          <div className="skeleton h-14 w-full" />
+          <div className="skeleton h-14 w-full" />
         </div>
+        <p className="text-xs text-text-muted mt-3">Fetching alternative prices...</p>
       </div>
     );
   }
 
   if (!data || data.mode === "none") {
     return (
-      <div className="glass-card p-6">
+      <div className="glass-card p-6 mt-5">
         <h3 className="font-display font-semibold text-lg mb-2 flex items-center gap-2">
-          <Beaker size={18} className="text-purple-300" /> Alternatives by ingredient
+          <Beaker size={18} className="text-purple-300" /> Alternatives
         </h3>
         <p className="text-text-secondary text-sm">
           {saltComposition
-            ? "We don't have this medicine's active ingredients in our verified catalog yet, so we can't suggest alternatives."
-            : "Salt composition not detected for this medicine."}
+            ? "No verified alternatives found for this medicine yet."
+            : "Salt composition not detected — can't suggest alternatives."}
         </p>
       </div>
     );
@@ -78,34 +109,36 @@ export function Alternatives({
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="glass-card p-6"
+      className="glass-card p-6 mt-5"
     >
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <h3 className="font-display font-semibold text-lg flex items-center gap-2">
-          <Beaker size={18} className="text-purple-300" />
-          Alternatives by ingredient
+          {modeIcon(data.mode)}
+          {modeTitle(data.mode)}
         </h3>
-        <div className="flex flex-wrap gap-1.5">
-          {data.ingredients.map((t) => (
-            <span
-              key={t}
-              className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 font-mono"
-            >
-              {t}
-            </span>
-          ))}
-        </div>
+        {data.ingredients.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {data.ingredients.map((t) => (
+              <span
+                key={t}
+                className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 font-mono"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {data.alternatives.length === 0 ? (
         <p className="text-text-secondary text-sm">
-          No verified alternatives in our catalog with the same active ingredients yet.
+          No verified alternatives in our catalog yet.
         </p>
       ) : (
         <>
           <div className="space-y-2 mb-4">
             {data.alternatives.map((a, i) => {
-              const matchPct = Math.round(a.similarity * 100);
+              const label = matchLabel(a);
               return (
                 <Link
                   key={a.id}
@@ -127,17 +160,13 @@ export function Alternatives({
                           </span>
                         )}
                         <span
-                          className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                            matchPct === 100
-                              ? "bg-emerald-500/15 text-emerald-300"
-                              : "bg-purple-500/15 text-purple-300"
-                          }`}
+                          className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${label.className}`}
                         >
-                          {matchPct === 100 ? "Identical" : `${matchPct}% match`}
+                          {label.text}
                         </span>
                       </div>
                       <div className="text-xs text-text-secondary truncate">
-                        {a.saltComposition}
+                        {a.saltComposition ?? a.name}
                         {a.manufacturer && ` · ${a.manufacturer}`}
                       </div>
                     </div>
@@ -152,7 +181,7 @@ export function Alternatives({
                           </div>
                         </>
                       ) : (
-                        <div className="text-xs text-text-muted">No live price</div>
+                        <div className="text-xs text-text-muted">No price yet</div>
                       )}
                     </div>
                     <ArrowRight

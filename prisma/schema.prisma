@@ -43,6 +43,8 @@ model Medicine {
   warnings        String?
   // Storage instructions
   storage         String?
+  // JSON array of substitute brand names from 1mg dataset (e.g. ["Penciclav 500 mg/125 mg Tablet"])
+  substitutes     String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -52,6 +54,7 @@ model Medicine {
 
   @@index([normalizedName])
   @@index([brandName])
+  @@index([saltComposition])
 }
 
 model PharmacyListing {

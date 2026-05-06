@@ -17,6 +17,7 @@
     "import-csv": "tsx scripts/import-medicines-from-csv.ts",
     "import-1mg": "tsx scripts/import-1mg-dataset.ts",
     "enrich-medicines": "tsx scripts/enrich-medicines.ts",
+    "import-substitutes": "tsx scripts/import-substitutes.ts",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
