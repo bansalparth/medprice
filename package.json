@@ -12,6 +12,7 @@
     "crawl:catalog": "tsx workers/crawl-catalog.ts --once",
     "seed:ja": "tsx scripts/seed-jan-aushadhi.ts",
     "seed:stores": "tsx scripts/seed-stores.ts",
+    "extract:stores": "python3 scripts/extract-stores-pdf.py",
     "seed:catalog": "tsx scripts/seed-medicines-catalog.ts",
     "seed:medicines": "tsx scripts/preseed-medicines.ts",
     "import-csv": "tsx scripts/import-medicines-from-csv.ts",

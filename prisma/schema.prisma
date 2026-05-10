@@ -98,13 +98,21 @@ model JanAushadhiProduct {
 }
 
 model JanAushadhiStore {
-  id        String  @id @default(cuid())
-  kendraId  String  @unique
-  state     String?
-  district  String?
-  address   String?
-  lat       Float?
-  lng       Float?
+  id             String  @id @default(cuid())
+  kendraId       String  @unique
+  state          String?
+  district       String?
+  block          String?
+  address        String?
+  pincode        String?
+  contactPerson  String?
+  contactDetails String?
+  lat            Float?
+  lng            Float?
+
+  @@index([state])
+  @@index([district])
+  @@index([pincode])
 }
 
 model SaltMapping {

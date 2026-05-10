@@ -30,3 +30,13 @@ export async function findNearestStores(userLat: number, userLng: number, limit 
     .sort((a, b) => a.distanceKm - b.distanceKm)
     .slice(0, limit);
 }
+
+export async function findStoresByCity(district: string, state?: string, limit = 20) {
+  return prisma.janAushadhiStore.findMany({
+    where: {
+      ...(district ? { district: { contains: district, mode: "insensitive" as const } } : {}),
+      ...(state ? { state: { contains: state, mode: "insensitive" as const } } : {}),
+    },
+    take: limit,
+  });
+}

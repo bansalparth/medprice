@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Search, Loader2, X, Crosshair } from "lucide-react";
+import { MapPin, Search, Loader2, X } from "lucide-react";
 import { useLocation, type LocationSearchResult } from "@/lib/location-context";
 
 /**
@@ -16,7 +16,6 @@ export function LocationPicker() {
   const {
     open,
     closePicker,
-    request,
     loading,
     error,
     location,
@@ -124,19 +123,6 @@ export function LocationPicker() {
                 </div>
               </div>
             </div>
-
-            <button
-              onClick={request}
-              disabled={loading}
-              className="w-full py-2.5 px-3 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 flex items-center justify-center gap-2 text-sm font-medium transition-colors disabled:opacity-60 mb-3"
-            >
-              {loading ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <Crosshair size={14} className="text-purple-300" />
-              )}
-              Use my current location
-            </button>
 
             {error && (
               <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-300">
