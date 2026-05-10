@@ -54,9 +54,11 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  const clientHeader = request.headers.get("x-medprice-client");
-  if (!clientHeader) {
-    return NextResponse.json({ error: "Missing client identifier" }, { status: 403 });
+  if (!pathname.startsWith("/api/go/")) {
+    const clientHeader = request.headers.get("x-medprice-client");
+    if (!clientHeader) {
+      return NextResponse.json({ error: "Missing client identifier" }, { status: 403 });
+    }
   }
 
   return NextResponse.next();
