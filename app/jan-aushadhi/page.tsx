@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Header } from "@/components/Header";
 import { apiFetch } from "@/lib/api-client";
+import { useLocation } from "@/lib/location-context";
 import { motion } from "framer-motion";
 import { MapPin, Navigation, Search, Loader2 } from "lucide-react";
 
@@ -11,26 +12,49 @@ interface Store {
   kendraId: string;
   state?: string | null;
   district?: string | null;
+  block?: string | null;
   address?: string | null;
+  pincode?: string | null;
+  contactPerson?: string | null;
+  contactDetails?: string | null;
   lat?: number | null;
   lng?: number | null;
   distanceKm?: number;
 }
 
 export default function JanAushadhiPage() {
+  const { location } = useLocation();
   const [stores, setStores] = useState<Store[]>([]);
   const [state, setState] = useState("");
   const [district, setDistrict] = useState("");
   const [loading, setLoading] = useState(false);
-  const [usingLocation, setUsingLocation] = useState(false);
+  const [initialized, setInitialized] = useState(false);
 
-  const search = async () => {
+  useEffect(() => {
+    if (initialized) return;
+    if (location) {
+      if (location.state) setState(location.state);
+      if (location.city) setDistrict(location.city);
+      setInitialized(true);
+    }
+  }, [location, initialized]);
+
+  const search = async (overrideState?: string, overrideDistrict?: string) => {
+    const s = overrideState ?? state;
+    const d = overrideDistrict ?? district;
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (state) params.set("state", state);
-      if (district) params.set("district", district);
-      const res = await apiFetch(`/api/stores/search?${params}`);
+      let res: Response;
+      if (location?.lat && location?.lng && (location.lat !== 0 || location.lng !== 0) && !s && !d) {
+        res = await apiFetch(
+          `/api/stores/nearby?lat=${location.lat}&lng=${location.lng}&limit=20`
+        );
+      } else {
+        const params = new URLSearchParams();
+        if (s) params.set("state", s);
+        if (d) params.set("district", d);
+        res = await apiFetch(`/api/stores/search?${params}`);
+      }
       const data = await res.json();
       setStores(data.stores ?? []);
     } finally {
@@ -38,32 +62,11 @@ export default function JanAushadhiPage() {
     }
   };
 
-  const useMyLocation = () => {
-    if (!navigator.geolocation) return;
-    setLoading(true);
-    setUsingLocation(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const res = await apiFetch(
-            `/api/stores/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&limit=20`
-          );
-          const data = await res.json();
-          setStores(data.stores ?? []);
-        } finally {
-          setLoading(false);
-        }
-      },
-      () => {
-        setLoading(false);
-        setUsingLocation(false);
-      }
-    );
-  };
-
   useEffect(() => {
-    search();
-  }, []);
+    if (initialized) {
+      search(state, district);
+    }
+  }, [initialized]);
 
   return (
     <>
@@ -97,19 +100,10 @@ export default function JanAushadhiPage() {
               className="px-4 py-2.5 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400"
             />
             <button
-              onClick={search}
+              onClick={() => search()}
               className="px-4 py-2.5 rounded-xl bg-purple-400 text-ink-950 font-semibold text-sm hover:bg-purple-300 transition-colors flex items-center justify-center gap-2"
             >
               <Search size={14} /> Search
-            </button>
-          </div>
-          <div className="mt-3 text-center">
-            <button
-              onClick={useMyLocation}
-              className="text-sm text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1.5"
-            >
-              <Navigation size={13} />
-              Find nearest stores using my location
             </button>
           </div>
         </div>
@@ -122,9 +116,7 @@ export default function JanAushadhiPage() {
 
         {!loading && stores.length === 0 && (
           <div className="glass-card p-10 text-center text-text-secondary">
-            No stores found. Run{" "}
-            <code className="text-purple-400">npm run seed:stores</code> to load
-            Jan Aushadhi Kendras.
+            No stores found. Try a different state or district.
           </div>
         )}
 
@@ -145,11 +137,18 @@ export default function JanAushadhiPage() {
                   <div className="text-xs text-text-secondary mt-1 line-clamp-2">
                     {s.address}
                   </div>
+                  {s.contactPerson && (
+                    <div className="text-[11px] text-text-muted mt-1">
+                      {s.contactPerson}
+                      {s.contactDetails && ` · ${s.contactDetails}`}
+                    </div>
+                  )}
                   <div className="text-[11px] text-text-muted mt-1">
                     Kendra {s.kendraId}
+                    {s.pincode && ` · ${s.pincode}`}
                   </div>
                 </div>
-                {usingLocation && s.distanceKm != null && (
+                {s.distanceKm != null && (
                   <span className="px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-300 text-[11px] font-medium shrink-0">
                     {s.distanceKm.toFixed(1)} km
                   </span>

@@ -1,15 +1,11 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Loader2, ShieldCheck, Lock, Search } from "lucide-react";
+import { MapPin, ShieldCheck, Lock, Search } from "lucide-react";
 import { useLocation } from "@/lib/location-context";
 
-/**
- * Full-screen overlay that blocks the app until the user grants location.
- * Shows the actual app underneath when location is set.
- */
 export function LocationGate({ children }: { children: React.ReactNode }) {
-  const { location, loading, error, request, openPicker } = useLocation();
+  const { location, openPicker } = useLocation();
   const granted = !!location;
 
   return (
@@ -56,47 +52,20 @@ export function LocationGate({ children }: { children: React.ReactNode }) {
                 </motion.div>
 
                 <h1 className="font-display font-bold text-2xl mb-3">
-                  We need your <span className="gradient-text">location</span>
+                  Choose your <span className="gradient-text">city</span>
                 </h1>
                 <p className="text-text-secondary text-sm mb-6 leading-relaxed">
-                  Medicine prices and stock vary by city. To show you accurate
-                  results from pharmacies that deliver to you, we need your location.
+                  Medicine prices and stock vary by city. Enter your city or
+                  pincode so we can show accurate results from pharmacies that
+                  deliver to you.
                 </p>
-
-                {error && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="mb-4 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-300"
-                  >
-                    {error}
-                  </motion.div>
-                )}
-
-                <button
-                  onClick={request}
-                  disabled={loading}
-                  className="btn-primary w-full py-3 rounded-xl font-display flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      Detecting location...
-                    </>
-                  ) : (
-                    <>
-                      <MapPin size={16} />
-                      Share my location
-                    </>
-                  )}
-                </button>
 
                 <button
                   onClick={openPicker}
-                  className="mt-2 w-full py-2.5 rounded-xl border border-overlay-10 hover:border-purple-400/40 bg-overlay-5 hover:bg-purple-500/10 transition-colors text-sm flex items-center justify-center gap-2 text-text-secondary hover:text-silver-100"
+                  className="btn-primary w-full py-3 rounded-xl font-display flex items-center justify-center gap-2"
                 >
-                  <Search size={14} />
-                  Enter city or pincode manually
+                  <Search size={16} />
+                  Enter city or pincode
                 </button>
 
                 <div className="mt-6 grid grid-cols-2 gap-3 text-left">
