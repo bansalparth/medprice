@@ -6,6 +6,7 @@ import { Search, Camera, Pill, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { VoiceButton } from "./VoiceButton";
 import { PrescriptionUploadModal } from "./PrescriptionUploadModal";
+import { apiFetch } from "@/lib/api-client";
 
 interface MedSuggestion {
   id: string;
@@ -81,7 +82,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
     }
     setLoading(true);
     try {
-      const r = await fetch(
+      const r = await apiFetch(
         `/api/medicines/search?q=${encodeURIComponent(q.trim())}&limit=10`
       );
       const d = await r.json();
@@ -172,7 +173,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
           <button
             type="button"
             onClick={() => setShowUpload(true)}
-            className="p-2.5 rounded-full text-text-secondary hover:text-purple-300 hover:bg-white/5 transition-colors"
+            className="p-2.5 rounded-full text-text-secondary hover:text-purple-300 hover:bg-overlay-5 transition-colors"
             title="Upload prescription"
             aria-label="Upload prescription"
           >
@@ -206,15 +207,15 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
                   type="button"
                   onClick={() => pick(s)}
                   onMouseEnter={() => setHoverIdx(i)}
-                  className={`w-full text-left px-4 py-3 flex items-center gap-3 transition-colors border-b border-white/5 last:border-0 ${
-                    hoverIdx === i ? "bg-purple-500/10" : "hover:bg-white/5"
+                  className={`w-full text-left px-4 py-3 flex items-center gap-3 transition-colors border-b border-overlay-5 last:border-0 ${
+                    hoverIdx === i ? "bg-purple-500/10" : "hover:bg-overlay-5"
                   }`}
                 >
                   <div
                     className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
                       s.isCatalog
                         ? "bg-purple-500/15 text-purple-300"
-                        : "bg-white/5 text-text-secondary"
+                        : "bg-overlay-5 text-text-secondary"
                     }`}
                   >
                     <Pill size={15} />
@@ -223,7 +224,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
                     <div className="font-medium truncate flex items-center gap-2">
                       <span>{s.name}</span>
                       {s.dosageForm && (
-                        <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-text-secondary">
+                        <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-overlay-5 text-text-secondary">
                           {s.dosageForm}
                         </span>
                       )}

@@ -52,7 +52,7 @@ export function LocationGate({ children }: { children: React.ReactNode }) {
                   transition={{ duration: 2.5, repeat: Infinity }}
                   className="w-16 h-16 rounded-2xl mx-auto mb-5 bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center shadow-lg shadow-purple-500/30"
                 >
-                  <MapPin size={28} className="text-silver-100" />
+                  <MapPin size={28} className="text-white" />
                 </motion.div>
 
                 <h1 className="font-display font-bold text-2xl mb-3">
@@ -93,7 +93,7 @@ export function LocationGate({ children }: { children: React.ReactNode }) {
 
                 <button
                   onClick={openPicker}
-                  className="mt-2 w-full py-2.5 rounded-xl border border-white/10 hover:border-purple-400/40 bg-white/5 hover:bg-purple-500/10 transition-colors text-sm flex items-center justify-center gap-2 text-text-secondary hover:text-silver-100"
+                  className="mt-2 w-full py-2.5 rounded-xl border border-overlay-10 hover:border-purple-400/40 bg-overlay-5 hover:bg-purple-500/10 transition-colors text-sm flex items-center justify-center gap-2 text-text-secondary hover:text-silver-100"
                 >
                   <Search size={14} />
                   Enter city or pincode manually

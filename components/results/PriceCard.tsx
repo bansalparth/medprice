@@ -71,7 +71,7 @@ export function PriceCard({
   const { location } = useLocation();
   const meta = PHARMACY_LABELS[listing.pharmacyName] ?? {
     label: listing.pharmacyName,
-    color: "bg-white/5 text-text-secondary border-white/10",
+    color: "bg-overlay-5 text-text-secondary border-overlay-10",
     pincodeAware: false,
   };
   const buyHref = `/api/go/${listing.pharmacyName}/${medicineId}${
@@ -100,7 +100,7 @@ export function PriceCard({
     >
       {isCheapest && (
         <div className="absolute -top-2 -right-2 px-2.5 py-1 rounded-full bg-gradient-to-r from-purple-400 to-purple-300 text-ink-950 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 shadow-lg">
-          <Crown size={11} /> Best Price
+          <Crown size={11} /> Best Online Price
         </div>
       )}
 
@@ -111,7 +111,7 @@ export function PriceCard({
           </span>
           {!meta.pincodeAware && (
             <span
-              className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-text-muted border border-white/5"
+              className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-overlay-5 text-text-muted border border-overlay-5"
               title="This pharmacy doesn't expose pincode-specific pricing on its search page — list price is national."
             >
               National
@@ -165,7 +165,7 @@ export function PriceCard({
               href={buyHref}
               target="_blank"
               rel="noreferrer noopener"
-              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-purple-400 hover:text-ink-950 border border-white/10 hover:border-purple-400 text-sm font-semibold transition-all flex items-center gap-1.5"
+              className="px-4 py-2 rounded-xl bg-overlay-5 hover:bg-purple-400 hover:text-ink-950 border border-overlay-10 hover:border-purple-400 text-sm font-semibold transition-all flex items-center gap-1.5"
             >
               Buy <ExternalLink size={13} />
             </a>

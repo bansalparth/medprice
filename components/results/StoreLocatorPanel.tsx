@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, MapPin, Navigation, Loader2 } from "lucide-react";
+import { apiFetch } from "@/lib/api-client";
 
 interface Store {
   id: string;
@@ -42,7 +43,7 @@ export function StoreLocatorPanel({
       async (pos) => {
         setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         try {
-          const res = await fetch(
+          const res = await apiFetch(
             `/api/stores/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&limit=5`
           );
           const data = await res.json();
@@ -81,16 +82,16 @@ export function StoreLocatorPanel({
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 400, opacity: 0 }}
             transition={{ type: "spring", damping: 25, stiffness: 220 }}
-            className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-ink-950 border-l border-white/10 z-50 overflow-y-auto"
+            className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-[var(--bg-primary)] border-l border-overlay-10 z-50 overflow-y-auto"
           >
-            <div className="sticky top-0 bg-ink-950/95 backdrop-blur-md border-b border-white/5 px-6 py-4 flex items-center justify-between">
+            <div className="sticky top-0 bg-[var(--bg-primary)]/95 backdrop-blur-md border-b border-overlay-5 px-6 py-4 flex items-center justify-between">
               <div>
                 <h2 className="font-display font-bold text-lg">Nearby Stores</h2>
                 <p className="text-xs text-text-secondary">Jan Aushadhi Kendras</p>
               </div>
               <button
                 onClick={onClose}
-                className="p-2 rounded-lg hover:bg-white/5 text-text-secondary hover:text-white"
+                className="p-2 rounded-lg hover:bg-overlay-5 text-text-secondary hover:text-white"
               >
                 <X size={18} />
               </button>

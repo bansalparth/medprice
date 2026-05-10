@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-client";
 
 interface Point {
   recordedAt: string;
@@ -35,7 +36,7 @@ export function PriceHistoryChart({ medicineId }: { medicineId: string }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/price-history/${medicineId}`)
+    apiFetch(`/api/price-history/${medicineId}`)
       .then((r) => r.json())
       .then((d) => setData(d))
       .finally(() => setLoading(false));
@@ -256,7 +257,7 @@ export function PriceHistoryChart({ medicineId }: { medicineId: string }) {
           return (
             <div
               key={name}
-              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-white/5 border border-white/5"
+              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-overlay-5 border border-overlay-5"
             >
               <span
                 className="w-2 h-2 rounded-full"

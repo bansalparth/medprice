@@ -11,10 +11,10 @@ const config: Config = {
       },
       colors: {
         silver: {
-          100: "#f4f5fb",
-          200: "#d8dbed",
-          300: "#b6bad4",
-          400: "#8b8fae",
+          100: "var(--silver-100)",
+          200: "var(--silver-200)",
+          300: "var(--silver-300)",
+          400: "var(--silver-400)",
         },
         purple: {
           300: "#c4b5fd",

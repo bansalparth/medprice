@@ -64,7 +64,7 @@ export function JanAushadhiSpotlight() {
               ].map((s) => (
                 <div
                   key={s.l}
-                  className="rounded-xl bg-white/5 border border-white/5 p-3 text-center"
+                  className="rounded-xl bg-overlay-5 border border-overlay-5 p-3 text-center"
                 >
                   <div className="font-display font-bold text-lg gradient-text-green">
                     {s.v}

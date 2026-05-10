@@ -130,7 +130,7 @@ export function SearchProgress({ query, pincode, city }: Props) {
               animate={{ rotate: 360 }}
               transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
             />
-            <div className="absolute inset-1 rounded-full bg-ink-950 flex items-center justify-center">
+            <div className="absolute inset-1 rounded-full bg-[var(--bg-primary)] flex items-center justify-center">
               <StageIcon size={18} className="text-purple-300" />
             </div>
           </div>
@@ -245,7 +245,7 @@ export function SearchProgress({ query, pincode, city }: Props) {
                     ? "bg-emerald-500/5 border-emerald-500/20"
                     : active
                     ? "bg-purple-500/10 border-purple-400/40"
-                    : "bg-white/[0.02] border-white/5"
+                    : "bg-overlay-3 border-overlay-5"
                 }`}
               >
                 {active && (

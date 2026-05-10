@@ -105,7 +105,7 @@ export function LocationPicker() {
           >
             <button
               onClick={closePicker}
-              className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-white/10 text-text-muted hover:text-silver-100 transition-colors"
+              className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-overlay-10 text-text-muted hover:text-silver-100 transition-colors"
               aria-label="Close"
             >
               <X size={16} />
@@ -154,12 +154,12 @@ export function LocationPicker() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search city, area or pincode..."
-                className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-ink-900/60 border border-white/10 focus:border-purple-400/60 focus:outline-none text-sm placeholder:text-text-muted"
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[var(--bg-secondary)]/60 border border-overlay-10 focus:border-purple-400/60 focus:outline-none text-sm placeholder:text-text-muted"
               />
             </div>
 
             {(searching || results.length > 0) && (
-              <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-white/5 bg-ink-950/60">
+              <div className="mt-2 max-h-72 overflow-y-auto rounded-xl border border-overlay-5 bg-[var(--bg-primary)]/60">
                 {searching && results.length === 0 && (
                   <div className="px-3 py-3 text-xs text-text-muted flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin" />
@@ -170,7 +170,7 @@ export function LocationPicker() {
                   <button
                     key={`${r.lat}-${r.lng}-${i}`}
                     onClick={() => choose(r)}
-                    className="w-full text-left px-3 py-2.5 hover:bg-purple-500/10 border-b border-white/5 last:border-0 transition-colors"
+                    className="w-full text-left px-3 py-2.5 hover:bg-purple-500/10 border-b border-overlay-5 last:border-0 transition-colors"
                   >
                     <div className="text-sm font-medium truncate">
                       {r.city ?? r.display.split(",")[0]}

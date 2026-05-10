@@ -65,8 +65,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="relative min-h-screen overflow-x-hidden">
+    <html lang="en" suppressHydrationWarning>
+      <body className="relative min-h-screen overflow-x-hidden bg-[var(--bg-primary)] text-[var(--text-primary)] transition-colors">
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{

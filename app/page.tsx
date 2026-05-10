@@ -13,7 +13,7 @@ export default function HomePage() {
         <HowItWorks />
         <JanAushadhiSpotlight />
         <RecentSearches />
-        <footer className="px-4 py-8 border-t border-white/5 text-center text-text-muted text-xs">
+        <footer className="px-4 py-8 border-t border-overlay-5 text-center text-text-muted text-xs">
           MedPrice · Open data, free forever. Prices change frequently — confirm
           before purchase.
         </footer>

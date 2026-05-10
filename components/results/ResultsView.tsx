@@ -8,6 +8,7 @@ import { JanAushadhiCard } from "./JanAushadhiCard";
 import { StoreLocatorPanel } from "./StoreLocatorPanel";
 import { SearchProgress } from "./SearchProgress";
 import { DrugInfo } from "./DrugInfo";
+import { apiFetch } from "@/lib/api-client";
 import { Alternatives } from "./Alternatives";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "@/lib/location-context";
@@ -102,7 +103,7 @@ export function ResultsView({ medicineId, query }: Props) {
       setError(null);
 
       try {
-        const r = await fetch(`/api/search?${params}`);
+        const r = await apiFetch(`/api/search?${params}`);
         if (!r.ok) throw new Error(`Search failed: ${r.status}`);
         const d: SearchResponse = await r.json();
         if (!cancelledRef.current) setData(d);

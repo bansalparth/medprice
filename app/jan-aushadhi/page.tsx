@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Header } from "@/components/Header";
+import { apiFetch } from "@/lib/api-client";
 import { motion } from "framer-motion";
 import { MapPin, Navigation, Search, Loader2 } from "lucide-react";
 
@@ -29,7 +30,7 @@ export default function JanAushadhiPage() {
       const params = new URLSearchParams();
       if (state) params.set("state", state);
       if (district) params.set("district", district);
-      const res = await fetch(`/api/stores/search?${params}`);
+      const res = await apiFetch(`/api/stores/search?${params}`);
       const data = await res.json();
       setStores(data.stores ?? []);
     } finally {
@@ -44,7 +45,7 @@ export default function JanAushadhiPage() {
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
-          const res = await fetch(
+          const res = await apiFetch(
             `/api/stores/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&limit=20`
           );
           const data = await res.json();
@@ -87,13 +88,13 @@ export default function JanAushadhiPage() {
               value={state}
               onChange={(e) => setState(e.target.value)}
               placeholder="State (e.g. Karnataka)"
-              className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:border-purple-400"
+              className="px-4 py-2.5 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400"
             />
             <input
               value={district}
               onChange={(e) => setDistrict(e.target.value)}
               placeholder="District (e.g. Bengaluru)"
-              className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:border-purple-400"
+              className="px-4 py-2.5 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400"
             />
             <button
               onClick={search}

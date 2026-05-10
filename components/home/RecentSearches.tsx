@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Clock } from "lucide-react";
+import { apiFetch } from "@/lib/api-client";
 
 export function RecentSearches() {
   const [searches, setSearches] = useState<{ query: string; count: number }[]>([]);
 
   useEffect(() => {
-    fetch("/api/recent-searches")
+    apiFetch("/api/recent-searches")
       .then((r) => r.json())
       .then((d) => setSearches(d.searches ?? []))
       .catch(() => {});
@@ -29,7 +30,7 @@ export function RecentSearches() {
           <Link
             key={s.query}
             href={`/search?q=${encodeURIComponent(s.query)}`}
-            className="px-4 py-2 rounded-full bg-white/5 border border-white/10 text-sm hover:border-purple-400 hover:text-purple-400 transition-colors"
+            className="px-4 py-2 rounded-full bg-overlay-5 border border-overlay-10 text-sm hover:border-purple-400 hover:text-purple-400 transition-colors"
           >
             {s.query}
           </Link>

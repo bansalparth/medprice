@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { motion } from "framer-motion";
-import { ArrowRight, Beaker, ShieldAlert, FlaskConical, FileText } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
+import { ArrowRight, Beaker, ShieldAlert, FlaskConical, FileText, AlertTriangle, X } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-client";
 
 interface Alt {
   id: string;
@@ -65,12 +66,14 @@ export function Alternatives({
 }) {
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams();
     if (cheapestPharmacy) params.set("pharmacy", cheapestPharmacy);
-    fetch(`/api/alternatives/${medicineId}?${params}`)
+    apiFetch(`/api/alternatives/${medicineId}?${params}`)
       .then((r) => r.json())
       .then(setData)
       .finally(() => setLoading(false));
@@ -130,6 +133,13 @@ export function Alternatives({
         )}
       </div>
 
+      <div className="flex gap-2 items-start text-xs leading-relaxed p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 mb-4">
+        <AlertTriangle size={14} className="text-amber-400 mt-0.5 shrink-0" />
+        <p className="text-amber-200">
+          Alternative medicines may have different compositions or effects. Please consult your doctor before switching medications.
+        </p>
+      </div>
+
       {data.alternatives.length === 0 ? (
         <p className="text-text-secondary text-sm">
           No verified alternatives in our catalog yet.
@@ -140,22 +150,22 @@ export function Alternatives({
             {data.alternatives.map((a, i) => {
               const label = matchLabel(a);
               return (
-                <Link
+                <div
                   key={a.id}
-                  href={`/search?medicineId=${a.id}`}
-                  className="block"
+                  onClick={() => setPendingHref(`/search?medicineId=${a.id}`)}
+                  className="block cursor-pointer"
                 >
                   <motion.div
                     initial={{ opacity: 0, x: -6 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.04 }}
-                    className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] hover:bg-purple-500/10 border border-white/5 hover:border-purple-400/40 transition-all group"
+                    className="flex items-center gap-3 p-3 rounded-xl bg-overlay-3 hover:bg-purple-500/10 border border-overlay-5 hover:border-purple-400/40 transition-all group"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="font-medium truncate flex items-center gap-2">
                         <span>{a.brandName ?? a.name}</span>
                         {a.dosageForm && (
-                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-text-secondary">
+                          <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-overlay-5 text-text-secondary">
                             {a.dosageForm}
                           </span>
                         )}
@@ -189,17 +199,72 @@ export function Alternatives({
                       className="text-text-muted group-hover:text-purple-300 transition-colors shrink-0"
                     />
                   </motion.div>
-                </Link>
+                </div>
               );
             })}
           </div>
 
-          <div className="flex gap-2 items-start text-[11px] text-text-muted leading-relaxed border-t border-white/5 pt-3">
+          <div className="flex gap-2 items-start text-[11px] text-text-muted leading-relaxed border-t border-overlay-5 pt-3">
             <ShieldAlert size={13} className="text-purple-300 mt-0.5 shrink-0" />
             <p>{data.disclaimer}</p>
           </div>
         </>
       )}
+
+      <AnimatePresence>
+        {pendingHref && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={() => setPendingHref(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-card p-6 max-w-md w-full rounded-2xl border border-amber-500/20 shadow-xl"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2 text-amber-400">
+                  <AlertTriangle size={20} />
+                  <h4 className="font-display font-semibold text-lg">Consult Your Doctor</h4>
+                </div>
+                <button
+                  onClick={() => setPendingHref(null)}
+                  className="p-1 rounded-lg hover:bg-overlay-10 transition-colors"
+                >
+                  <X size={18} className="text-text-muted" />
+                </button>
+              </div>
+              <p className="text-text-secondary text-sm leading-relaxed mb-6">
+                Alternative medicines may contain different inactive ingredients, have different
+                bioavailability, or may not be suitable for your specific condition. Always consult
+                your doctor or pharmacist before switching to an alternative medication.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setPendingHref(null)}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-overlay-10 text-text-secondary hover:bg-overlay-5 transition-colors text-sm font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    router.push(pendingHref);
+                    setPendingHref(null);
+                  }}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white transition-colors text-sm font-medium"
+                >
+                  Continue to Alternative
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

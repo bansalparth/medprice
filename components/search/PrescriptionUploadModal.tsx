@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { motion } from "framer-motion";
 import { Camera, X, Loader2, CheckCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { apiFetch } from "@/lib/api-client";
 
 type Step = "idle" | "uploading" | "processing" | "done" | "error";
 
@@ -22,7 +23,7 @@ export function PrescriptionUploadModal({ onClose }: { onClose: () => void }) {
 
     try {
       setStep("processing");
-      const res = await fetch("/api/ocr", { method: "POST", body: formData });
+      const res = await apiFetch("/api/ocr", { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) {
         setErrorMsg(data.error ?? "Upload failed");
@@ -73,13 +74,13 @@ export function PrescriptionUploadModal({ onClose }: { onClose: () => void }) {
         initial={{ scale: 0.92, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.92, opacity: 0 }}
-        className="glass-card w-full max-w-md p-6 bg-ink-950/95"
+        className="glass-card w-full max-w-md p-6 bg-[var(--bg-primary)]/95"
       >
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-display text-xl font-bold">Upload Prescription</h2>
           <button
             onClick={onClose}
-            className="text-text-secondary hover:text-white p-1 rounded-lg hover:bg-white/5"
+            className="text-text-secondary hover:text-white p-1 rounded-lg hover:bg-overlay-5"
           >
             <X size={20} />
           </button>
@@ -96,7 +97,7 @@ export function PrescriptionUploadModal({ onClose }: { onClose: () => void }) {
             className={`border-2 border-dashed rounded-xl p-10 text-center transition-all cursor-pointer ${
               dragging
                 ? "border-purple-400 bg-purple-400/5"
-                : "border-white/10 hover:border-white/20"
+                : "border-overlay-10 hover:border-white/20"
             }`}
             onClick={() =>
               document.getElementById("prescription-input")?.click()
@@ -165,7 +166,7 @@ export function PrescriptionUploadModal({ onClose }: { onClose: () => void }) {
                 {medicines.map((m, i) => (
                   <div
                     key={i}
-                    className="flex items-center gap-2 p-3 rounded-lg bg-white/5"
+                    className="flex items-center gap-2 p-3 rounded-lg bg-overlay-5"
                   >
                     <span className="text-text-secondary text-sm w-5">
                       {i + 1}.

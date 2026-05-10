@@ -86,7 +86,7 @@ export function VoiceButton({ onTranscript }: Props) {
         className={`relative z-10 p-2.5 rounded-full transition-colors ${
           listening
             ? "bg-purple-500 text-silver-100"
-            : "text-text-secondary hover:text-purple-300 hover:bg-white/5"
+            : "text-text-secondary hover:text-purple-300 hover:bg-overlay-5"
         }`}
         title={
           listening

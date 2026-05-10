@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Crown, Loader2, ShoppingCart, ExternalLink, Heart, Check, X, Truck } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "@/lib/location-context";
+import { apiFetch } from "@/lib/api-client";
 
 const PHARMACY_LABELS: Record<string, string> = {
   "1mg": "1mg",
@@ -48,7 +49,7 @@ export function BasketView({ queries }: { queries: string[] }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch("/api/basket", {
+    apiFetch("/api/basket", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ queries, pincode: location?.pincode ?? null }),
@@ -201,7 +202,7 @@ export function BasketView({ queries }: { queries: string[] }) {
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="text-text-secondary text-xs uppercase tracking-wider">
-              <th className="text-left p-3 sticky left-0 bg-ink-950/95 z-10">
+              <th className="text-left p-3 sticky left-0 bg-[var(--bg-primary)]/95 z-10">
                 Medicine
               </th>
               {allPharmaciesInOrder.map((ph, i) => (
@@ -236,9 +237,9 @@ export function BasketView({ queries }: { queries: string[] }) {
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.04 }}
-                  className="border-t border-white/5 hover:bg-white/[0.02]"
+                  className="border-t border-overlay-5 hover:bg-overlay-3"
                 >
-                  <td className="p-3 sticky left-0 bg-ink-950/95 z-10">
+                  <td className="p-3 sticky left-0 bg-[var(--bg-primary)]/95 z-10">
                     {item.medicineId ? (
                       <Link
                         href={`/search?q=${encodeURIComponent(item.medicineName)}`}
@@ -304,8 +305,8 @@ export function BasketView({ queries }: { queries: string[] }) {
               );
             })}
             {/* Totals row */}
-            <tr className="border-t-2 border-white/10 bg-white/[0.02]">
-              <td className="p-3 font-semibold sticky left-0 bg-ink-950/95 z-10">
+            <tr className="border-t-2 border-overlay-10 bg-overlay-3">
+              <td className="p-3 font-semibold sticky left-0 bg-[var(--bg-primary)]/95 z-10">
                 Total
               </td>
               {allPharmaciesInOrder.map((ph, i) => (

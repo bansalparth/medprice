@@ -5,6 +5,7 @@ import { Header } from "@/components/Header";
 import { motion } from "framer-motion";
 import { Loader2, Lock, Play, RefreshCw } from "lucide-react";
 import { timeAgo } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-client";
 
 interface Job {
   id: string;
@@ -47,7 +48,7 @@ export default function AdminPage() {
     setLoading(true);
     setAuthError("");
     try {
-      const res = await fetch("/api/admin/scrape-status", {
+      const res = await apiFetch("/api/admin/scrape-status", {
         headers: { "x-admin-password": password },
       });
       if (res.status === 401) {
@@ -74,7 +75,7 @@ export default function AdminPage() {
     setTriggering(true);
     setTriggerResult("");
     try {
-      const res = await fetch("/api/admin/trigger-scrape", {
+      const res = await apiFetch("/api/admin/trigger-scrape", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -122,7 +123,7 @@ export default function AdminPage() {
                 onChange={(e) => setPwd(e.target.value)}
                 type="password"
                 placeholder="Admin password"
-                className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-sm focus:border-purple-400 mb-3"
+                className="w-full px-4 py-3 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400 mb-3"
               />
               {authError && (
                 <p className="text-red-400 text-sm mb-3">{authError}</p>
@@ -148,7 +149,7 @@ export default function AdminPage() {
           <h1 className="font-display font-bold text-3xl">Admin Dashboard</h1>
           <button
             onClick={() => fetchData(pwd)}
-            className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm flex items-center gap-2"
+            className="px-3 py-2 rounded-lg bg-overlay-5 hover:bg-overlay-10 text-sm flex items-center gap-2"
           >
             <RefreshCw size={14} /> Refresh
           </button>
@@ -186,12 +187,12 @@ export default function AdminPage() {
                   value={triggerQuery}
                   onChange={(e) => setTriggerQuery(e.target.value)}
                   placeholder="Medicine name (e.g. paracetamol)"
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:border-purple-400"
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400"
                 />
                 <select
                   value={triggerPharmacy}
                   onChange={(e) => setTriggerPharmacy(e.target.value)}
-                  className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm focus:border-purple-400"
+                  className="px-4 py-2.5 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400"
                 >
                   {PHARMACIES.map((p) => (
                     <option key={p} value={p}>
@@ -229,7 +230,7 @@ export default function AdminPage() {
                   {data.jobs.map((j) => (
                     <div
                       key={j.id}
-                      className="flex items-center justify-between p-3 rounded-lg bg-white/5 text-sm"
+                      className="flex items-center justify-between p-3 rounded-lg bg-overlay-5 text-sm"
                     >
                       <div>
                         <div className="font-medium">{j.pharmacy}</div>
@@ -267,7 +268,7 @@ export default function AdminPage() {
                   {data.topSearches.map((s) => (
                     <div
                       key={s.query}
-                      className="flex items-center justify-between p-3 rounded-lg bg-white/5 text-sm"
+                      className="flex items-center justify-between p-3 rounded-lg bg-overlay-5 text-sm"
                     >
                       <span className="truncate">{s.query}</span>
                       <span className="text-text-muted text-xs">

@@ -24,7 +24,7 @@ export function Hero() {
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/5 text-xs text-text-secondary mb-6"
+          className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-overlay-10 bg-overlay-5 text-xs text-text-secondary mb-6"
         >
           <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
           India's most comprehensive medicine price comparison
@@ -79,7 +79,7 @@ export function Hero() {
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.8 + i * 0.1 }}
-              className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-text-secondary"
+              className="px-3 py-1.5 rounded-full bg-overlay-5 border border-overlay-10 text-text-secondary"
             >
               {s}
             </motion.span>
