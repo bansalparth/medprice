@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, MapPin, Navigation, Loader2 } from "lucide-react";
 import { apiFetch } from "@/lib/api-client";
-import { useLocation } from "@/lib/location-context";
 
 interface Store {
   id: string;
@@ -12,12 +11,9 @@ interface Store {
   state?: string | null;
   district?: string | null;
   address?: string | null;
-  pincode?: string | null;
-  contactPerson?: string | null;
-  contactDetails?: string | null;
   lat?: number | null;
   lng?: number | null;
-  distanceKm?: number;
+  distanceKm: number;
 }
 
 export function StoreLocatorPanel({
@@ -27,48 +23,48 @@ export function StoreLocatorPanel({
   open: boolean;
   onClose: () => void;
 }) {
-  const { location } = useLocation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
     if (!open) return;
     if (stores.length > 0) return;
-    if (!location) {
-      setError("Set your city to find nearby stores.");
+
+    if (!navigator.geolocation) {
+      setError("Geolocation is not supported by your browser.");
       return;
     }
 
     setLoading(true);
     setError(null);
-
-    const fetchStores = async () => {
-      try {
-        let res: Response;
-        if (location.lat && location.lng && (location.lat !== 0 || location.lng !== 0)) {
-          res = await apiFetch(
-            `/api/stores/nearby?lat=${location.lat}&lng=${location.lng}&limit=5`
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        try {
+          const res = await apiFetch(
+            `/api/stores/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&limit=5`
           );
-        } else {
-          const params = new URLSearchParams();
-          if (location.city) params.set("district", location.city);
-          if (location.state) params.set("state", location.state);
-          res = await apiFetch(`/api/stores/search?${params}`);
+          const data = await res.json();
+          setStores(data.stores ?? []);
+        } catch {
+          setError("Could not load stores.");
+        } finally {
+          setLoading(false);
         }
-        const data = await res.json();
-        setStores(data.stores ?? []);
-      } catch {
-        setError("Could not load stores.");
-      } finally {
+      },
+      (err) => {
+        setError(
+          err.code === 1
+            ? "Location permission denied. Enable it to find nearby stores."
+            : "Could not get your location."
+        );
         setLoading(false);
-      }
-    };
-
-    fetchStores();
-  }, [open, stores.length, location]);
-
-  const cityLabel = location?.city ?? location?.state ?? "your area";
+      },
+      { enableHighAccuracy: false, timeout: 10000 }
+    );
+  }, [open, stores.length]);
 
   return (
     <AnimatePresence>
@@ -90,9 +86,7 @@ export function StoreLocatorPanel({
           >
             <div className="sticky top-0 bg-[var(--bg-primary)]/95 backdrop-blur-md border-b border-overlay-5 px-6 py-4 flex items-center justify-between">
               <div>
-                <h2 className="font-display font-bold text-lg">
-                  Stores in {cityLabel}
-                </h2>
+                <h2 className="font-display font-bold text-lg">Nearby Stores</h2>
                 <p className="text-xs text-text-secondary">Jan Aushadhi Kendras</p>
               </div>
               <button
@@ -108,7 +102,7 @@ export function StoreLocatorPanel({
                 <div className="text-center py-12">
                   <Loader2 className="mx-auto mb-3 animate-spin text-purple-400" />
                   <p className="text-text-secondary text-sm">
-                    Finding stores...
+                    Finding nearest stores...
                   </p>
                 </div>
               )}
@@ -119,7 +113,9 @@ export function StoreLocatorPanel({
 
               {!loading && !error && stores.length === 0 && (
                 <div className="text-center py-8 text-text-secondary text-sm">
-                  No Jan Aushadhi stores found in {cityLabel}.
+                  No stores found in our database yet. Run{" "}
+                  <code className="text-purple-400">npm run seed:stores</code>{" "}
+                  to load Jan Aushadhi Kendras.
                 </div>
               )}
 
@@ -140,18 +136,10 @@ export function StoreLocatorPanel({
                         <div className="text-xs text-text-secondary mt-1">
                           {s.address}
                         </div>
-                        {s.contactPerson && (
-                          <div className="text-[11px] text-text-muted mt-1">
-                            {s.contactPerson}
-                            {s.contactDetails && ` · ${s.contactDetails}`}
-                          </div>
-                        )}
                       </div>
-                      {s.distanceKm != null && (
-                        <span className="px-2 py-1 rounded-full bg-accent-green/10 text-accent-green text-[11px] font-medium shrink-0">
-                          {s.distanceKm.toFixed(1)} km
-                        </span>
-                      )}
+                      <span className="px-2 py-1 rounded-full bg-accent-green/10 text-accent-green text-[11px] font-medium shrink-0">
+                        {s.distanceKm.toFixed(1)} km
+                      </span>
                     </div>
                     {s.lat && s.lng && (
                       <a
@@ -167,10 +155,10 @@ export function StoreLocatorPanel({
                 ))}
               </div>
 
-              {location && (
+              {coords && (
                 <p className="mt-6 text-[11px] text-text-muted text-center flex items-center justify-center gap-1">
-                  <MapPin size={11} /> Showing stores for: {location.city ?? location.pincode ?? "—"}
-                  {location.state && `, ${location.state}`}
+                  <MapPin size={11} /> Your location:{" "}
+                  {coords.lat.toFixed(3)}, {coords.lng.toFixed(3)}
                 </p>
               )}
             </div>
