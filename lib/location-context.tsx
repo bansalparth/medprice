@@ -22,6 +22,12 @@ export interface LocationSearchResult {
 
 interface LocationCtxValue {
   location: UserLocation | null;
+  /**
+   * True once the initial localStorage hydration has completed.
+   * Consumers that fetch based on `location.pincode` should wait until
+   * `ready` is true to avoid firing twice (once without pincode, once with).
+   */
+  ready: boolean;
   loading: boolean;
   error: string | null;
   request: () => void;
@@ -60,6 +66,7 @@ async function reverseGeocode(lat: number, lng: number) {
 
 export function LocationProvider({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useState<UserLocation | null>(null);
+  const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,6 +84,8 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {
       /* ignore */
+    } finally {
+      setReady(true);
     }
   }, []);
 
@@ -228,6 +237,7 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     <LocationCtx.Provider
       value={{
         location,
+        ready,
         loading,
         error,
         request,

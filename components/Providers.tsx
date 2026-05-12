@@ -7,7 +7,7 @@ import { LocationPicker } from "@/components/LocationPicker";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
       <LocationProvider>
         <LocationGate>{children}</LocationGate>
         <LocationPicker />

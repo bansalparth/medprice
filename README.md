@@ -140,4 +140,4 @@ public/
 
 ## License & disclaimer
 
-Open data, free forever. **Prices change frequently — confirm with the pharmacy before purchase.** This project is not affiliated with any of the listed pharmacies or with PMBJP.
+Open data. **Prices change frequently — always confirm with the pharmacy before buying.** This project is not affiliated with any of the listed pharmacies or with PMBJP.

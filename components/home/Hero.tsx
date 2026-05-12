@@ -70,9 +70,9 @@ export function Hero() {
           className="mt-8 flex flex-wrap justify-center gap-2 text-xs"
         >
           {[
-            "6 pharmacies compared",
+            "6 pharmacies + Jan Aushadhi",
             "10,000+ Jan Aushadhi stores",
-            "Free forever",
+            "No signup needed",
           ].map((s, i) => (
             <motion.span
               key={s}

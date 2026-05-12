@@ -64,8 +64,11 @@ const PROFILES: Record<string, DeliveryProfile> = {
     rest: { eta: "4-6 days", serviceable: true },
   },
   pharmeasy: {
-    metro: { eta: "Tomorrow", serviceable: true },
-    tier2: { eta: "2-4 days", serviceable: true },
+    // PharmEasy's pincode-aware widget routinely pushes most SKUs to T+2 in
+    // metros (cutoffs, warehouse handoff). "Tomorrow" was consistently a day
+    // earlier than what pharmeasy.in actually showed.
+    metro: { eta: "2 days", serviceable: true },
+    tier2: { eta: "3-5 days", serviceable: true },
     rest: { eta: "5-7 days", serviceable: true },
   },
   netmeds: {
@@ -118,7 +121,12 @@ const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct"
  *   "4-6 days"   → "Fri–Sun, May 9–11"
  */
 export function etaToDateLabel(eta: string): string {
-  const now = new Date();
+  // Anchor every date calculation to IST regardless of the server's TZ
+  // (Vercel functions run in UTC; requests near midnight IST otherwise
+  // produce off-by-one dates).
+  const now = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+  );
 
   const addDays = (n: number) => {
     const d = new Date(now);

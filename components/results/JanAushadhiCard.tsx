@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { Heart, MapPin } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
+import { AvailabilityWarning } from "./AvailabilityWarning";
 
 interface JanAushadhiCardProps {
   product: {
@@ -75,6 +76,7 @@ export function JanAushadhiCard({
           </button>
         </div>
       </div>
+      <AvailabilityWarning className="mt-4" />
     </motion.div>
   );
 }

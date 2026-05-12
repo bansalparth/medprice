@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, MapPin, Navigation, Loader2, Phone, User, Hash } from "lucide-react";
 import { apiFetch } from "@/lib/api-client";
+import { AvailabilityWarning } from "./AvailabilityWarning";
 
 interface Store {
   id: string;
@@ -135,6 +136,9 @@ export function StoreLocatorPanel({
             </div>
 
             <div className="p-6">
+              {!loading && !error && stores.length > 0 && (
+                <AvailabilityWarning compact className="mb-4" />
+              )}
               {loading && (
                 <div className="text-center py-12">
                   <Loader2 className="mx-auto mb-3 animate-spin text-purple-400" />

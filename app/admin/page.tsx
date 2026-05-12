@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { notFound } from "next/navigation";
 import { Header } from "@/components/Header";
 import { motion } from "framer-motion";
 import { Loader2, Lock, Play, RefreshCw } from "lucide-react";
@@ -26,6 +27,7 @@ interface AdminData {
 const PHARMACIES = ["all", "1mg", "netmeds", "pharmeasy", "apollo", "truemeds", "mrmed"];
 
 export default function AdminPage() {
+  const [unlocked, setUnlocked] = useState<boolean | null>(null);
   const [pwd, setPwd] = useState("");
   const [authed, setAuthed] = useState(false);
   const [authError, setAuthError] = useState("");
@@ -37,6 +39,11 @@ export default function AdminPage() {
   const [triggerResult, setTriggerResult] = useState<string>("");
 
   useEffect(() => {
+    // 404 disguise: only render the admin surface if the URL carries ?u=1.
+    // Done in an effect (not at render-time) to avoid hydration mismatch.
+    const ok = new URLSearchParams(window.location.search).get("u") === "1";
+    setUnlocked(ok);
+    if (!ok) return;
     const saved = sessionStorage.getItem("medprice_admin");
     if (saved) {
       setPwd(saved);
@@ -97,6 +104,13 @@ export default function AdminPage() {
       setTriggering(false);
     }
   };
+
+  // Wait for the effect that reads the URL — render nothing until we know
+  // whether to proceed.
+  if (unlocked === null) return null;
+  if (unlocked === false) {
+    notFound();
+  }
 
   if (!authed) {
     return (

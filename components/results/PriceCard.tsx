@@ -132,8 +132,12 @@ export function PriceCard({
                 <Truck size={11} /> Not available at your pincode
               </span>
             ) : listing.inStock && deliveryLabel ? (
-              <span className="flex items-center gap-1 text-emerald-300/90">
-                <Truck size={11} /> {deliveryLabel}
+              <span
+                className="flex items-center gap-1 text-emerald-300/90"
+                title="Estimated based on your pincode — confirm on the pharmacy site at checkout."
+              >
+                <Truck size={11} />
+                <span className="text-text-muted">Est.</span> {deliveryLabel}
               </span>
             ) : null}
           </div>

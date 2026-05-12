@@ -7,11 +7,11 @@ const STEPS = [
   {
     icon: Pill,
     title: "Search or photograph",
-    desc: "Type, speak, or snap a photo of your prescription. Our AI extracts every medicine.",
+    desc: "Type the medicine name or snap a photo of your prescription. Our AI extracts every medicine.",
   },
   {
     icon: Camera,
-    title: "Compare across 7 sources",
+    title: "Compare 6 pharmacies + Jan Aushadhi",
     desc: "Live price check across India's 6 biggest pharmacies plus Jan Aushadhi government stores.",
   },
   {

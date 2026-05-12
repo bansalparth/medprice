@@ -40,9 +40,12 @@ const SCRAPERS: ScraperEntry[] = [
 export const PINCODE_AWARE_PHARMACIES = new Set(["1mg", "apollo"]);
 
 // Hard ceiling per pharmacy — if one site hangs, fail it fast so the rest
-// of the scrape completes within the function's wall-clock budget.
+// of the scrape completes within the function's wall-clock budget. Default
+// dropped from 10s → 5s: site failure modes (DNS hangs, TLS handshakes)
+// rarely recover, and 5s is still well above the p95 success latency of the
+// healthy HTTP scrapers (~1–3s).
 const PER_SCRAPER_TIMEOUT_MS = parseInt(
-  process.env.PER_SCRAPER_TIMEOUT_MS ?? "10000",
+  process.env.PER_SCRAPER_TIMEOUT_MS ?? "5000",
   10
 );
 

@@ -11,12 +11,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// Two-tier cache:
-//   - FRESH: < FRESH_TTL_MS old → serve immediately, no scrape.
-//   - STALE: FRESH..STALE_TTL_MS → serve immediately, refresh in background.
-//   - >STALE_TTL_MS (or none): block on a live scrape.
+// Three-tier cache (instant response for everything we've seen before):
+//   - FRESH (< FRESH_TTL_MS):     serve immediately, no scrape.
+//   - STALE (FRESH..STALE_TTL_MS): serve immediately, kick off background refresh.
+//   - ANCIENT (> STALE_TTL_MS):    STILL serve immediately + background refresh.
+//     We only block on a live scrape when there's literally nothing cached.
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 const STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Beyond STALE_TTL_MS we still return the cached row (now treated as a
+// best-effort placeholder) and queue a background refresh — never block the
+// user on a slow scrape just because the data is old.
+const ANCIENT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 // Short-TTL in-memory dedupe so two near-simultaneous requests for the same
 // medicine reuse the same in-flight scrape instead of launching it twice.
@@ -99,8 +104,10 @@ export async function GET(req: NextRequest) {
     where: { id: medRow.id },
     include: {
       listings: {
+        // Accept anything up to ANCIENT_TTL_MS old — we'd rather show stale
+        // prices instantly than make the user wait on a slow scrape.
         where: {
-          scrapedAt: { gte: new Date(Date.now() - STALE_TTL_MS) },
+          scrapedAt: { gte: new Date(Date.now() - ANCIENT_TTL_MS) },
           pincode: pincode ?? null,
         },
         orderBy: [{ inStock: "desc" }, { sellingPrice: "asc" }],
@@ -135,7 +142,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // STALE band: serve immediately, kick off a background refresh.
+    // STALE or ANCIENT band: serve immediately, kick off a background refresh.
     // We don't await — Vercel keeps the function alive briefly after the
     // response is sent (best-effort), and even if it's killed mid-scrape
     // the next request still gets a fresh result on its turn.

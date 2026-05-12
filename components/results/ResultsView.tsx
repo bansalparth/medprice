@@ -77,13 +77,19 @@ interface Props {
   query?: string;
 }
 
+// Module-level memory cache so navigating away and back to the same medicine
+// (within the user's session) renders instantly without hitting the network.
+// Capped TTL so users still see a refresh after a few minutes.
+const CLIENT_CACHE = new Map<string, { data: SearchResponse; ts: number }>();
+const CLIENT_TTL_MS = 5 * 60 * 1000;
+
 export function ResultsView({ medicineId, query }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState<SearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [storePanelOpen, setStorePanelOpen] = useState(false);
-  const { location } = useLocation();
+  const { location, ready: locationReady } = useLocation();
   const cancelledRef = useRef(false);
 
   const runSearch = useCallback(
@@ -93,6 +99,19 @@ export function ResultsView({ medicineId, query }: Props) {
       else if (query) params.set("q", query);
       if (location?.pincode) params.set("pincode", location.pincode);
       if (opts.refresh) params.set("refresh", "1");
+
+      const cacheKey = params.toString();
+
+      // Client-side memory cache hit — render instantly, skip network entirely.
+      if (!opts.refresh) {
+        const hit = CLIENT_CACHE.get(cacheKey);
+        if (hit && Date.now() - hit.ts < CLIENT_TTL_MS) {
+          setData(hit.data);
+          setLoading(false);
+          setError(null);
+          return;
+        }
+      }
 
       if (opts.refresh) {
         setRefreshing(true);
@@ -106,7 +125,10 @@ export function ResultsView({ medicineId, query }: Props) {
         const r = await apiFetch(`/api/search?${params}`);
         if (!r.ok) throw new Error(`Search failed: ${r.status}`);
         const d: SearchResponse = await r.json();
-        if (!cancelledRef.current) setData(d);
+        if (!cancelledRef.current) {
+          setData(d);
+          CLIENT_CACHE.set(cacheKey, { data: d, ts: Date.now() });
+        }
       } catch (err: any) {
         if (!cancelledRef.current) setError(err?.message ?? "Search failed");
       } finally {
@@ -120,12 +142,17 @@ export function ResultsView({ medicineId, query }: Props) {
   );
 
   useEffect(() => {
+    // Wait for the location context to finish hydrating from localStorage
+    // before firing the first search. Otherwise we'd fire once without a
+    // pincode (yielding city-less results and re-mounting <SearchProgress />
+    // once the real pincode arrives — the visible "refresh" flicker).
+    if (!locationReady) return;
     cancelledRef.current = false;
     runSearch();
     return () => {
       cancelledRef.current = true;
     };
-  }, [runSearch]);
+  }, [runSearch, locationReady]);
 
   const [showOos, setShowOos] = useState(false);
 

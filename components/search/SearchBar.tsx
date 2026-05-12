@@ -4,7 +4,6 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Camera, Pill, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { VoiceButton } from "./VoiceButton";
 import { PrescriptionUploadModal } from "./PrescriptionUploadModal";
 import { apiFetch } from "@/lib/api-client";
 
@@ -106,7 +105,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
       return;
     }
     setLoading(true);
-    debounceRef.current = setTimeout(() => fetchSuggestions(value), 120);
+    debounceRef.current = setTimeout(() => fetchSuggestions(value), 80);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
@@ -169,7 +168,6 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
             className="flex-1 bg-transparent border-0 px-2 py-2 text-base placeholder:text-text-muted"
             aria-label="Search medicine"
           />
-          <VoiceButton onTranscript={(t) => setValue(t)} />
           <button
             type="button"
             onClick={() => setShowUpload(true)}
