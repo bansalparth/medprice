@@ -193,15 +193,14 @@ export function LocationPicker() {
                 Currently:{" "}
                 <span className="text-text-secondary">
                   {location.city ??
+                    location.pincode ??
                     location.state ??
-                    (location.pincode
-                      ? location.pincode
-                      : `${location.lat.toFixed(3)}, ${location.lng.toFixed(3)}`)}
-                  {location.pincode && location.city && ` · ${location.pincode}`}
+                    `${location.lat.toFixed(3)}, ${location.lng.toFixed(3)}`}
+                  {location.city && location.pincode && ` · ${location.pincode}`}
                 </span>
-                {!location.city && !location.pincode && (
+                {!location.city && !location.pincode && !location.state && (
                   <span className="ml-1">
-                    — couldn&apos;t resolve to a city. Type yours above.
+                    — couldn&apos;t resolve. Type your city or pincode above.
                   </span>
                 )}
               </div>

@@ -96,9 +96,20 @@ async function reverseViaNominatim(lat: number, lng: number): Promise<ReverseRes
     if (!res.ok) return null;
     const data = await res.json();
     const a = data.address ?? {};
+    // Wider fallback chain so peri-urban coordinates (Yelahanka, Kannuru,
+    // Whitefield outskirts etc.) still surface something more useful than
+    // raw lat/lng. `state_district` covers e.g. "Bengaluru Urban".
     return {
       pincode: a.postcode ?? null,
-      city: a.city ?? a.town ?? a.village ?? a.suburb ?? a.county ?? null,
+      city:
+        a.city ??
+        a.town ??
+        a.village ??
+        a.suburb ??
+        a.city_district ??
+        a.county ??
+        a.state_district ??
+        null,
       state: a.state ?? null,
     };
   } catch {
@@ -125,14 +136,20 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Hydrate from storage on mount
+  // Hydrate from storage on mount. If the stored row has lat/lng but no
+  // city/pincode (typically because it was captured before the Photon fix
+  // landed, when Nominatim zoom=14 returned blanks), re-run reverse geocode
+  // in the background and upgrade the row in place. This is the only path
+  // that retroactively repairs stale localStorage on the user's device.
   useEffect(() => {
+    let parsed: UserLocation | null = null;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw) as UserLocation;
-        if (Date.now() - parsed.capturedAt < STALE_MS) {
-          setLocation(parsed);
+        const candidate = JSON.parse(raw) as UserLocation;
+        if (Date.now() - candidate.capturedAt < STALE_MS) {
+          parsed = candidate;
+          setLocation(candidate);
         } else {
           localStorage.removeItem(STORAGE_KEY);
         }
@@ -141,6 +158,30 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
       /* ignore */
     } finally {
       setReady(true);
+    }
+
+    if (
+      parsed &&
+      !parsed.city &&
+      !parsed.pincode &&
+      Number.isFinite(parsed.lat) &&
+      Number.isFinite(parsed.lng)
+    ) {
+      // Fire-and-forget upgrade. If geocode still returns nothing useful,
+      // we keep the existing row untouched.
+      reverseGeocode(parsed.lat, parsed.lng).then((rg) => {
+        if (!rg.city && !rg.pincode && !rg.state) return;
+        const upgraded: UserLocation = {
+          ...parsed!,
+          city: rg.city ?? parsed!.city,
+          pincode: rg.pincode ?? parsed!.pincode,
+          state: rg.state ?? parsed!.state,
+        };
+        setLocation(upgraded);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(upgraded));
+        } catch {}
+      });
     }
   }, []);
 
