@@ -135,14 +135,16 @@ export function ResultsView({ medicineId, query }: Props) {
         }
       }
 
-      // Reset state for a fresh search.
+      // Reset state for a fresh search. We always clear the "stream done"
+      // signal and the pending pharmacy set so the cheapest-price badge
+      // and price-sorted ordering don't apply until the new stream finishes.
       if (opts.refresh) {
         setRefreshing(true);
       } else {
         setMedicine(null);
-        setStreamDone(false);
-        setPendingPharmacies(new Set(EXPECTED_PHARMACIES));
       }
+      setStreamDone(false);
+      setPendingPharmacies(new Set(EXPECTED_PHARMACIES));
       setMessage(null);
       setError(null);
 
@@ -254,13 +256,29 @@ export function ResultsView({ medicineId, query }: Props) {
 
   const initialLoading = !medicine && !error;
   const allListings = medicine?.listings ?? [];
-  const inStockListings = allListings.filter((l) => l.inStock);
+  const inStockListingsArrivalOrder = allListings.filter((l) => l.inStock);
   const oosListings = allListings.filter((l) => !l.inStock);
   const respondedPharmacies = new Set(allListings.map((l) => l.pharmacyName));
   const stillPending = Array.from(pendingPharmacies).filter(
     (p) => !respondedPharmacies.has(p)
   );
-  const cheapest = inStockListings.find((l) => l.sellingPrice != null);
+
+  // While pharmacies are still streaming in, we keep listings in arrival
+  // order and DON'T highlight a "cheapest" — otherwise the crown would jump
+  // from card to card as cheaper results land. Once the stream is `done`
+  // (all pharmacies have responded), we sort by price and mark the real
+  // cheapest with the Best Online Price badge.
+  const inStockListings = streamDone
+    ? [...inStockListingsArrivalOrder].sort((a, b) => {
+        const ap = a.sellingPrice ?? a.mrp ?? Infinity;
+        const bp = b.sellingPrice ?? b.mrp ?? Infinity;
+        return ap - bp;
+      })
+    : inStockListingsArrivalOrder;
+
+  const cheapest = streamDone
+    ? inStockListings.find((l) => l.sellingPrice != null)
+    : null;
   const cheapestPrice = cheapest?.sellingPrice ?? null;
   const janAushadhiMatch = medicine?.saltMappings?.[0]?.janAushadhiProduct ?? null;
   const savings =
