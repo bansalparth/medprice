@@ -129,7 +129,10 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
   }, [value]);
 
   const pick = (s: MedSuggestion) => {
-    const display = s.brandName ?? s.name;
+    // Mirror what the dropdown row showed — `s.name` (e.g. "Dolo 650 Tablet")
+    // — not the short brand alone. Using the full name also gives scrapers
+    // a more specific query, so filtering rejects fewer relevant cross-sells.
+    const display = s.name;
     skipNextFetchRef.current = true;
     setValue(display);
     setSuggestions([]);

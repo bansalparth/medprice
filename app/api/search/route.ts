@@ -497,7 +497,20 @@ async function persistFinalListings(
   pincode: string | null,
   svcByPharmacy: Map<string, any>
 ): Promise<void> {
-  if (finalListings.length === 0) return;
+  // Empty result set: scrape ran but nothing relevant matched. Flip
+  // hasInStock=false so the row stops appearing in autocomplete. Also
+  // wipe any stale prior listings (they're not in stock anywhere now).
+  if (finalListings.length === 0) {
+    await Promise.all([
+      prisma.medicine
+        .update({ where: { id: medRow.id }, data: { hasInStock: false } })
+        .catch(() => null),
+      prisma.pharmacyListing
+        .deleteMany({ where: { medicineId: medRow.id } })
+        .catch(() => null),
+    ]);
+    return;
+  }
 
   // Derive saltComposition (catalog trusts itself; non-catalog accepts scrape)
   const newSalt =
@@ -920,6 +933,16 @@ async function persistScrapeResults(
   relevantScraped = dedupePerPharmacy(relevantScraped, sourceText, brandTokens);
 
   if (relevantScraped.length === 0) {
+    // Zero relevant listings → strip this row from autocomplete and wipe
+    // stale prior listings. Same logic as persistFinalListings.
+    await Promise.all([
+      prisma.medicine
+        .update({ where: { id: medRow.id }, data: { hasInStock: false } })
+        .catch(() => null),
+      prisma.pharmacyListing
+        .deleteMany({ where: { medicineId: medRow.id } })
+        .catch(() => null),
+    ]);
     return { relevantCount: 0 };
   }
 
