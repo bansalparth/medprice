@@ -44,24 +44,79 @@ const LocationCtx = createContext<LocationCtxValue | null>(null);
 const STORAGE_KEY = "medprice_location_v1";
 const STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-async function reverseGeocode(lat: number, lng: number) {
-  // Nominatim — free, no key
-  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=14&addressdetails=1`;
+interface ReverseResult {
+  pincode: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+async function reverseViaPhoton(lat: number, lng: number): Promise<ReverseResult | null> {
+  // Photon reliably returns BOTH `city` and `postcode` for Indian
+  // coordinates, unlike Nominatim's /reverse at zoom=14 which omits
+  // postcode. CORS is open; the User-Agent header isn't needed (browsers
+  // silently strip it anyway).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
   try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "MedPrice/1.0" },
-    });
-    if (!res.ok) return { pincode: null, city: null, state: null };
+    const res = await fetch(
+      `https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}&lang=en`,
+      { signal: controller.signal }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const features = Array.isArray(data?.features) ? data.features : [];
+    const f =
+      features.find((x: any) => x?.properties?.countrycode === "IN") ??
+      features[0];
+    const p = f?.properties ?? {};
+    return {
+      pincode: p.postcode ?? null,
+      city:
+        p.city ?? p.district ?? p.county ?? p.locality ?? p.name ?? null,
+      state: p.state ?? null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function reverseViaNominatim(lat: number, lng: number): Promise<ReverseResult | null> {
+  // Fallback used only when Photon returns empty. Nominatim's `reverse`
+  // omits postcode at zoom=14, so we use zoom=16 (street level) which is
+  // more likely to include it.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=16&addressdetails=1`,
+      { signal: controller.signal }
+    );
+    if (!res.ok) return null;
     const data = await res.json();
     const a = data.address ?? {};
     return {
       pincode: a.postcode ?? null,
-      city: a.city ?? a.town ?? a.village ?? a.suburb ?? null,
+      city: a.city ?? a.town ?? a.village ?? a.suburb ?? a.county ?? null,
       state: a.state ?? null,
     };
   } catch {
-    return { pincode: null, city: null, state: null };
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+async function reverseGeocode(lat: number, lng: number): Promise<ReverseResult> {
+  // Try Photon first (better Indian data), fall back to Nominatim if Photon
+  // returns nothing useful. Always return *something* so the caller can
+  // still persist the lat/lng even when reverse geocoding fails entirely.
+  const photon = await reverseViaPhoton(lat, lng);
+  if (photon && (photon.city || photon.pincode)) return photon;
+  const nominatim = await reverseViaNominatim(lat, lng);
+  if (nominatim && (nominatim.city || nominatim.pincode)) return nominatim;
+  return photon ?? nominatim ?? { pincode: null, city: null, state: null };
 }
 
 export function LocationProvider({ children }: { children: React.ReactNode }) {

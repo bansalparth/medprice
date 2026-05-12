@@ -192,9 +192,18 @@ export function LocationPicker() {
               <div className="mt-4 text-[11px] text-text-muted">
                 Currently:{" "}
                 <span className="text-text-secondary">
-                  {location.city ?? "—"}
-                  {location.pincode && ` · ${location.pincode}`}
+                  {location.city ??
+                    location.state ??
+                    (location.pincode
+                      ? location.pincode
+                      : `${location.lat.toFixed(3)}, ${location.lng.toFixed(3)}`)}
+                  {location.pincode && location.city && ` · ${location.pincode}`}
                 </span>
+                {!location.city && !location.pincode && (
+                  <span className="ml-1">
+                    — couldn&apos;t resolve to a city. Type yours above.
+                  </span>
+                )}
               </div>
             )}
           </motion.div>
