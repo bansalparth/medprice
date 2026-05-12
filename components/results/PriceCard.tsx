@@ -62,6 +62,8 @@ interface PriceCardProps {
   medicineId: string;
   isCheapest?: boolean;
   index?: number;
+  searchLogId?: string | null;
+  position?: number;
 }
 
 export function PriceCard({
@@ -69,6 +71,8 @@ export function PriceCard({
   medicineId,
   isCheapest = false,
   index = 0,
+  searchLogId = null,
+  position,
 }: PriceCardProps) {
   const { location } = useLocation();
   const meta = PHARMACY_LABELS[listing.pharmacyName] ?? {
@@ -76,8 +80,15 @@ export function PriceCard({
     color: "bg-overlay-5 text-text-secondary border-overlay-10",
     pincodeAware: false,
   };
+  const buyParams = new URLSearchParams();
+  if (location?.pincode) buyParams.set("pincode", location.pincode);
+  if (searchLogId) buyParams.set("sl", searchLogId);
+  if (typeof position === "number") buyParams.set("pos", String(position));
+  if (listing.sellingPrice != null) buyParams.set("p", String(listing.sellingPrice));
+  if (listing.mrp != null) buyParams.set("m", String(listing.mrp));
+  if (isCheapest) buyParams.set("c", "1");
   const buyHref = `/api/go/${listing.pharmacyName}/${medicineId}${
-    location?.pincode ? `?pincode=${location.pincode}` : ""
+    buyParams.toString() ? `?${buyParams.toString()}` : ""
   }`;
 
   // We now display the REAL ETA string straight from the pharmacy's own

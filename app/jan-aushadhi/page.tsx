@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { MapPin, Navigation, Search, Loader2 } from "lucide-react";
 import { AvailabilityWarning } from "@/components/results/AvailabilityWarning";
 import { useLocation } from "@/lib/location-context";
+import { trackLocatorAction } from "@/lib/tracking-client";
 
 interface Store {
   id: string;
@@ -96,7 +97,13 @@ export default function JanAushadhiPage() {
       if (district) params.set("district", district);
       const res = await apiFetch(`/api/stores/search?${params}`);
       const data = await res.json();
-      setStores(data.stores ?? []);
+      const found = data.stores ?? [];
+      setStores(found);
+      trackLocatorAction("search", {
+        state,
+        district: district || null,
+        results: found.length,
+      });
     } finally {
       setLoading(false);
     }
@@ -106,6 +113,7 @@ export default function JanAushadhiPage() {
     if (!navigator.geolocation) return;
     setLoading(true);
     setUsingLocation(true);
+    trackLocatorAction("geo_request", {});
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
@@ -113,7 +121,16 @@ export default function JanAushadhiPage() {
             `/api/stores/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&limit=20`
           );
           const data = await res.json();
-          setStores(data.stores ?? []);
+          const found = data.stores ?? [];
+          setStores(found);
+          const nearestKm =
+            found[0]?.distanceKm != null
+              ? Number(found[0].distanceKm.toFixed(2))
+              : null;
+          trackLocatorAction("geo_results", {
+            results: found.length,
+            nearestKm,
+          });
         } finally {
           setLoading(false);
         }
@@ -121,6 +138,7 @@ export default function JanAushadhiPage() {
       () => {
         setLoading(false);
         setUsingLocation(false);
+        trackLocatorAction("geo_denied", {});
       }
     );
   };

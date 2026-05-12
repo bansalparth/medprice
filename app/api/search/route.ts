@@ -6,11 +6,105 @@ import { normalizeMedicineName } from "@/lib/utils";
 import { estimateDelivery } from "@/lib/delivery";
 import { lookupDrugDetail } from "@/lib/drug-details";
 import { checkAll as checkServiceability } from "@/lib/scrapers/serviceability";
+import { readSid } from "@/lib/tracking";
 import {
   buildFilterContext,
   filterRelevantListings,
   pickBestPerPharmacy,
 } from "@/lib/search/filter";
+
+const REFINE_WINDOW_MS = 30_000;
+
+async function recordSearch(opts: {
+  sid: string | null;
+  query: string;
+  medicineId: string | null;
+  inputMethod: string;
+  pincode: string | null;
+  autocompletePicked: boolean;
+}): Promise<string | null> {
+  const refinedFromId = opts.sid
+    ? await prisma.searchLog
+        .findFirst({
+          where: {
+            sid: opts.sid,
+            createdAt: { gte: new Date(Date.now() - REFINE_WINDOW_MS) },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        })
+        .catch(() => null)
+    : null;
+
+  return prisma.searchLog
+    .create({
+      data: {
+        query: opts.query,
+        medicineId: opts.medicineId,
+        inputMethod: opts.inputMethod,
+        sid: opts.sid ?? null,
+        pincode: opts.pincode ?? null,
+        autocompletePicked: opts.autocompletePicked,
+        refinedFromId: refinedFromId?.id ?? null,
+      },
+      select: { id: true },
+    })
+    .then((r) => r.id)
+    .catch(() => null);
+}
+
+function finalizeSearchLog(
+  searchLogId: string | null,
+  listings: { pharmacyName: string; sellingPrice: number | null; mrp: number | null; productName?: string }[],
+  janAushadhiMatch: boolean,
+  latencyMs: number,
+  medicineId: string | null
+) {
+  if (!searchLogId) return;
+  prisma.searchLog
+    .update({
+      where: { id: searchLogId },
+      data: {
+        resultsCount: listings.length,
+        janAushadhiMatch,
+        latencyMs,
+      },
+    })
+    .catch(() => null);
+
+  if (listings.length === 0 || !medicineId) return;
+  prisma.searchImpression
+    .createMany({
+      data: listings.map((l, idx) => ({
+        searchLogId,
+        medicineId,
+        pharmacyName: l.pharmacyName,
+        position: idx + 1,
+        sellingPrice: l.sellingPrice,
+        mrp: l.mrp,
+        isJanAushadhi: false,
+      })),
+    })
+    .catch(() => null);
+}
+
+function refreshSession(sid: string | null, pincode: string | null) {
+  if (!sid) return;
+  prisma.session
+    .upsert({
+      where: { sid },
+      update: {
+        lastSeenAt: new Date(),
+        pincode: pincode ?? undefined,
+      },
+      create: {
+        sid,
+        pincode: pincode ?? null,
+        locationSource: pincode ? "search" : null,
+      },
+    })
+    .catch(() => null);
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,11 +135,15 @@ const INFLIGHT_TTL_MS = 30_000;
  *  - ?q=text             (legacy free-text — still supported for back-compat)
  */
 export async function GET(req: NextRequest) {
+  const t0 = Date.now();
   const medicineIdParam = req.nextUrl.searchParams.get("medicineId")?.trim();
   const queryParam = req.nextUrl.searchParams.get("q")?.trim();
   const inputMethod = req.nextUrl.searchParams.get("method") ?? "text";
   const pincode = req.nextUrl.searchParams.get("pincode") ?? null;
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
+  const autocompletePicked = req.nextUrl.searchParams.get("picked") === "1";
+  const sid = readSid(req);
+  refreshSession(sid, pincode);
 
   if (!medicineIdParam && !queryParam) {
     return NextResponse.json(
@@ -84,16 +182,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Medicine not found" }, { status: 404 });
   }
 
-  // Log the search
-  prisma.searchLog
-    .create({
-      data: {
-        query: queryParam ?? medRow.name,
-        medicineId: medRow.id,
-        inputMethod,
-      },
-    })
-    .catch(() => {});
+  const searchLogId = await recordSearch({
+    sid,
+    query: queryParam ?? medRow.name,
+    medicineId: medRow.id,
+    inputMethod,
+    pincode,
+    autocompletePicked,
+  });
 
   // Build the precise scrape query — for catalog entries we use the FULL display
   // name (e.g., "Crocin Advance Tablet" → matches that brand only)
@@ -140,10 +236,19 @@ export async function GET(req: NextRequest) {
     const ageMs = Date.now() - newest;
 
     if (ageMs < FRESH_TTL_MS) {
+      const enriched = enrich(cachedMed, pincode);
+      finalizeSearchLog(
+        searchLogId,
+        enriched.listings,
+        (enriched.saltMappings?.length ?? 0) > 0,
+        Date.now() - t0,
+        medRow.id
+      );
       return NextResponse.json({
-        medicine: enrich(cachedMed, pincode),
+        medicine: enriched,
         cached: true,
         pincode,
+        searchLogId,
       });
     }
 
@@ -165,12 +270,21 @@ export async function GET(req: NextRequest) {
         );
     }
 
+    const enrichedStale = enrich(cachedMed, pincode);
+    finalizeSearchLog(
+      searchLogId,
+      enrichedStale.listings,
+      (enrichedStale.saltMappings?.length ?? 0) > 0,
+      Date.now() - t0,
+      medRow.id
+    );
     return NextResponse.json({
-      medicine: enrich(cachedMed, pincode),
+      medicine: enrichedStale,
       cached: true,
       stale: true,
       ageMs,
       pincode,
+      searchLogId,
     });
   }
 
@@ -186,7 +300,7 @@ export async function GET(req: NextRequest) {
   );
 
   if (acceptsStream) {
-    return buildStreamingResponse(medRow, scrapeQuery, pincode);
+    return buildStreamingResponse(medRow, scrapeQuery, pincode, searchLogId, t0);
   }
 
   // Legacy non-streaming path (unchanged).
@@ -207,11 +321,20 @@ export async function GET(req: NextRequest) {
         saltMappings: { include: { janAushadhiProduct: true } },
       },
     });
+    const enrichedEmpty = enrich(fullMedEmpty, pincode);
+    finalizeSearchLog(
+      searchLogId,
+      enrichedEmpty.listings,
+      (enrichedEmpty.saltMappings?.length ?? 0) > 0,
+      Date.now() - t0,
+      medRow.id
+    );
     return NextResponse.json({
-      medicine: enrich(fullMedEmpty, pincode),
+      medicine: enrichedEmpty,
       cached: false,
       scraped: [],
       pincode,
+      searchLogId,
     });
   }
 
@@ -225,11 +348,20 @@ export async function GET(req: NextRequest) {
         saltMappings: { include: { janAushadhiProduct: true } },
       },
     });
+    const enrichedZero = enrich(fullMedEmpty, pincode);
+    finalizeSearchLog(
+      searchLogId,
+      enrichedZero.listings,
+      (enrichedZero.saltMappings?.length ?? 0) > 0,
+      Date.now() - t0,
+      medRow.id
+    );
     return NextResponse.json({
-      medicine: enrich(fullMedEmpty, pincode),
+      medicine: enrichedZero,
       cached: false,
       scraped: [],
       pincode,
+      searchLogId,
       message: `No live listings matched the brand "${medRow.brandName ?? medRow.name}". The drug may be out of stock everywhere or our scrapers are being blocked.`,
     });
   }
@@ -241,10 +373,19 @@ export async function GET(req: NextRequest) {
       saltMappings: { include: { janAushadhiProduct: true } },
     },
   });
+  const enrichedFinal = enrich(fullMed, pincode);
+  finalizeSearchLog(
+    searchLogId,
+    enrichedFinal.listings,
+    (enrichedFinal.saltMappings?.length ?? 0) > 0,
+    Date.now() - t0,
+    medRow.id
+  );
   return NextResponse.json({
-    medicine: enrich(fullMed, pincode),
+    medicine: enrichedFinal,
     cached: false,
     pincode,
+    searchLogId,
   });
 }
 
@@ -266,7 +407,9 @@ export async function GET(req: NextRequest) {
 function buildStreamingResponse(
   medRow: any,
   scrapeQuery: string,
-  pincode: string | null
+  pincode: string | null,
+  searchLogId: string | null,
+  t0: number
 ): Response {
   const ctx = buildFilterContext(medRow);
   const isBrowserish =
@@ -310,6 +453,7 @@ function buildStreamingResponse(
           pincode
         ),
         pincode,
+        searchLogId,
       });
 
       // (2) Per-pharmacy streaming. Each pharmacy emits its listing chunk
@@ -466,6 +610,24 @@ function buildStreamingResponse(
           err?.message ?? err
         );
       }
+
+      const finalMed = await prisma.medicine
+        .findUnique({
+          where: { id: medRow.id },
+          include: { saltMappings: true },
+        })
+        .catch(() => null);
+      finalizeSearchLog(
+        searchLogId,
+        finalListings.map((l) => ({
+          pharmacyName: l.pharmacyName,
+          sellingPrice: l.sellingPrice ?? null,
+          mrp: l.mrp ?? null,
+        })),
+        (finalMed?.saltMappings?.length ?? 0) > 0,
+        Date.now() - t0,
+        medRow.id
+      );
 
       controller.close();
     },

@@ -3,10 +3,57 @@
 import { useEffect, useState } from "react";
 import { notFound } from "next/navigation";
 import { Header } from "@/components/Header";
-import { motion } from "framer-motion";
-import { Loader2, Lock, Play, RefreshCw } from "lucide-react";
+import { Lock, Play, RefreshCw, Loader2 } from "lucide-react";
 import { timeAgo } from "@/lib/utils";
 import { apiFetch } from "@/lib/api-client";
+import {
+  TrafficPanel,
+  GeographyPanel,
+  MedicinesPanel,
+  SearchPanel,
+  ClicksPanel,
+  UploadsPanel,
+  JanAushadhiPanel,
+  PricingPanel,
+  OpsPanel,
+  FunnelPanel,
+  LiveStrip,
+} from "@/components/admin/MetricsPanels";
+
+type Window = "1h" | "24h" | "7d" | "30d";
+type Tab =
+  | "overview"
+  | "traffic"
+  | "geography"
+  | "medicines"
+  | "search"
+  | "clicks"
+  | "uploads"
+  | "jaushadhi"
+  | "pricing"
+  | "ops";
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "overview", label: "Overview" },
+  { key: "traffic", label: "Traffic" },
+  { key: "geography", label: "Geography" },
+  { key: "medicines", label: "Medicines" },
+  { key: "search", label: "Search" },
+  { key: "clicks", label: "Clicks" },
+  { key: "uploads", label: "Uploads" },
+  { key: "jaushadhi", label: "Jan Aushadhi" },
+  { key: "pricing", label: "Pricing" },
+  { key: "ops", label: "Ops & Scrapes" },
+];
+
+const WINDOWS: { key: Window; label: string }[] = [
+  { key: "1h", label: "1h" },
+  { key: "24h", label: "24h" },
+  { key: "7d", label: "7d" },
+  { key: "30d", label: "30d" },
+];
+
+const PHARMACIES = ["all", "1mg", "netmeds", "pharmeasy", "apollo", "truemeds", "mrmed"];
 
 interface Job {
   id: string;
@@ -18,30 +65,17 @@ interface Job {
   errorMessage?: string | null;
 }
 
-interface AdminData {
-  jobs: Job[];
-  topSearches: { query: string; _count: { query: number } }[];
-  stats: { totalMedicines: number; totalListings: number; totalStores: number };
-}
-
-const PHARMACIES = ["all", "1mg", "netmeds", "pharmeasy", "apollo", "truemeds", "mrmed"];
-
 export default function AdminPage() {
   const [unlocked, setUnlocked] = useState<boolean | null>(null);
   const [pwd, setPwd] = useState("");
   const [authed, setAuthed] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [data, setData] = useState<AdminData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [triggerQuery, setTriggerQuery] = useState("");
-  const [triggerPharmacy, setTriggerPharmacy] = useState("all");
-  const [triggering, setTriggering] = useState(false);
-  const [triggerResult, setTriggerResult] = useState<string>("");
+  const [authChecking, setAuthChecking] = useState(false);
+  const [tab, setTab] = useState<Tab>("overview");
+  const [window, setWindow] = useState<Window>("24h");
 
   useEffect(() => {
-    // 404 disguise: only render the admin surface if the URL carries ?u=1.
-    // Done in an effect (not at render-time) to avoid hydration mismatch.
-    const ok = new URLSearchParams(window.location.search).get("u") === "1";
+    const ok = new URLSearchParams(globalThis.location?.search ?? "").get("u") === "1";
     setUnlocked(ok);
     if (!ok) return;
     const saved = sessionStorage.getItem("medprice_admin");
@@ -51,105 +85,57 @@ export default function AdminPage() {
     }
   }, []);
 
-  const fetchData = async (password: string) => {
-    setLoading(true);
+  const submitPwd = async () => {
+    if (!pwd) return;
+    setAuthChecking(true);
     setAuthError("");
     try {
-      const res = await apiFetch("/api/admin/scrape-status", {
-        headers: { "x-admin-password": password },
+      const res = await apiFetch("/api/admin/metrics/live", {
+        headers: { "x-admin-password": pwd },
       });
       if (res.status === 401) {
         setAuthError("Wrong password");
-        setAuthed(false);
         sessionStorage.removeItem("medprice_admin");
         return;
       }
-      const d = await res.json();
-      setData(d);
+      sessionStorage.setItem("medprice_admin", pwd);
       setAuthed(true);
-      sessionStorage.setItem("medprice_admin", password);
     } finally {
-      setLoading(false);
+      setAuthChecking(false);
     }
   };
 
-  useEffect(() => {
-    if (authed) fetchData(pwd);
-  }, [authed]);
-
-  const triggerScrape = async () => {
-    if (!triggerQuery.trim()) return;
-    setTriggering(true);
-    setTriggerResult("");
-    try {
-      const res = await apiFetch("/api/admin/trigger-scrape", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-password": pwd,
-        },
-        body: JSON.stringify({
-          query: triggerQuery.trim(),
-          pharmacy: triggerPharmacy,
-        }),
-      });
-      const d = await res.json();
-      setTriggerResult(
-        res.ok
-          ? `Scraped ${d.count} listings`
-          : `Failed: ${d.error ?? "unknown"}`
-      );
-      fetchData(pwd);
-    } finally {
-      setTriggering(false);
-    }
-  };
-
-  // Wait for the effect that reads the URL — render nothing until we know
-  // whether to proceed.
   if (unlocked === null) return null;
-  if (unlocked === false) {
-    notFound();
-  }
+  if (unlocked === false) notFound();
 
   if (!authed) {
     return (
       <>
         <Header />
         <main className="max-w-md mx-auto px-4 py-20">
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-card p-8"
-          >
-            <div className="flex items-center gap-3 mb-6">
-              <Lock className="text-purple-400" />
-              <h1 className="font-display font-bold text-2xl">Admin</h1>
+          <div className="glass-card p-8">
+            <div className="flex items-center gap-2 mb-4">
+              <Lock size={18} className="text-purple-400" />
+              <h1 className="font-display font-bold text-xl">Admin</h1>
             </div>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                fetchData(pwd);
-              }}
+            <input
+              type="password"
+              autoFocus
+              value={pwd}
+              onChange={(e) => setPwd(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitPwd()}
+              placeholder="Password"
+              className="w-full px-4 py-3 rounded-xl bg-overlay-5 border border-overlay-10 focus:border-purple-400 outline-none"
+            />
+            {authError && <div className="text-red-300 text-sm mt-2">{authError}</div>}
+            <button
+              onClick={submitPwd}
+              disabled={authChecking || !pwd}
+              className="w-full mt-3 px-4 py-3 rounded-xl bg-purple-400 text-ink-950 font-semibold hover:bg-purple-300 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              <input
-                value={pwd}
-                onChange={(e) => setPwd(e.target.value)}
-                type="password"
-                placeholder="Admin password"
-                className="w-full px-4 py-3 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400 mb-3"
-              />
-              {authError && (
-                <p className="text-red-400 text-sm mb-3">{authError}</p>
-              )}
-              <button
-                type="submit"
-                className="w-full py-3 rounded-xl bg-purple-400 text-ink-950 font-semibold hover:bg-purple-300 transition-colors"
-              >
-                Sign in
-              </button>
-            </form>
-          </motion.div>
+              {authChecking ? <Loader2 className="animate-spin" size={16} /> : "Unlock"}
+            </button>
+          </div>
         </main>
       </>
     );
@@ -158,144 +144,224 @@ export default function AdminPage() {
   return (
     <>
       <Header />
-      <main className="max-w-6xl mx-auto px-4 py-10">
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="font-display font-bold text-3xl">Admin Dashboard</h1>
-          <button
-            onClick={() => fetchData(pwd)}
-            className="px-3 py-2 rounded-lg bg-overlay-5 hover:bg-overlay-10 text-sm flex items-center gap-2"
-          >
-            <RefreshCw size={14} /> Refresh
-          </button>
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h1 className="font-display font-bold text-2xl">Admin Dashboard</h1>
+          <div className="flex items-center gap-1 glass-card p-1">
+            {WINDOWS.map((w) => (
+              <button
+                key={w.key}
+                onClick={() => setWindow(w.key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  window === w.key
+                    ? "bg-purple-400 text-ink-950"
+                    : "text-text-secondary hover:text-white"
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {loading && (
-          <Loader2 className="animate-spin text-purple-400 mx-auto my-12" />
-        )}
+        <div className="mb-4">
+          <LiveStrip password={pwd} />
+        </div>
 
-        {data && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
-              {[
-                { l: "Medicines", v: data.stats.totalMedicines },
-                { l: "Listings", v: data.stats.totalListings },
-                { l: "JA Stores", v: data.stats.totalStores },
-              ].map((s) => (
-                <div key={s.l} className="glass-card p-5">
-                  <div className="text-text-secondary text-xs uppercase tracking-wider">
-                    {s.l}
-                  </div>
-                  <div className="font-display font-bold text-3xl mt-1 gradient-text">
-                    {s.v.toLocaleString("en-IN")}
-                  </div>
-                </div>
-              ))}
+        <div className="flex gap-1 mb-4 overflow-x-auto border-b border-overlay-5 pb-px">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                tab === t.key
+                  ? "border-purple-400 text-white"
+                  : "border-transparent text-text-secondary hover:text-white"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="pb-12">
+          {tab === "overview" && (
+            <div className="space-y-4">
+              <FunnelPanel password={pwd} window={window} />
+              <TrafficPanel password={pwd} window={window} />
             </div>
-
-            <div className="glass-card p-5 mb-8">
-              <h2 className="font-display font-bold text-lg mb-4">
-                Trigger Scrape
-              </h2>
-              <div className="flex flex-col md:flex-row gap-3">
-                <input
-                  value={triggerQuery}
-                  onChange={(e) => setTriggerQuery(e.target.value)}
-                  placeholder="Medicine name (e.g. paracetamol)"
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400"
-                />
-                <select
-                  value={triggerPharmacy}
-                  onChange={(e) => setTriggerPharmacy(e.target.value)}
-                  className="px-4 py-2.5 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400"
-                >
-                  {PHARMACIES.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={triggerScrape}
-                  disabled={triggering || !triggerQuery.trim()}
-                  className="px-4 py-2.5 rounded-xl bg-purple-400 text-ink-950 font-semibold text-sm hover:bg-purple-300 transition-colors disabled:opacity-50 flex items-center gap-2"
-                >
-                  {triggering ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <Play size={14} />
-                  )}
-                  Run
-                </button>
-              </div>
-              {triggerResult && (
-                <p className="text-sm mt-3 text-text-secondary">{triggerResult}</p>
-              )}
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="glass-card p-5">
-                <h2 className="font-display font-bold text-lg mb-4">
-                  Recent Scrape Jobs
-                </h2>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {data.jobs.length === 0 && (
-                    <p className="text-text-secondary text-sm">No jobs yet.</p>
-                  )}
-                  {data.jobs.map((j) => (
-                    <div
-                      key={j.id}
-                      className="flex items-center justify-between p-3 rounded-lg bg-overlay-5 text-sm"
-                    >
-                      <div>
-                        <div className="font-medium">{j.pharmacy}</div>
-                        <div className="text-text-muted text-xs mt-0.5">
-                          {timeAgo(j.startedAt)} · {j.medicinesScraped ?? "—"}{" "}
-                          listings
-                        </div>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                          j.status === "success"
-                            ? "bg-emerald-500/10 text-emerald-300"
-                            : j.status === "failed"
-                            ? "bg-red-500/10 text-red-300"
-                            : "bg-yellow-500/10 text-yellow-300"
-                        }`}
-                      >
-                        {j.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="glass-card p-5">
-                <h2 className="font-display font-bold text-lg mb-4">
-                  Top Searches
-                </h2>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {data.topSearches.length === 0 && (
-                    <p className="text-text-secondary text-sm">
-                      No searches yet.
-                    </p>
-                  )}
-                  {data.topSearches.map((s) => (
-                    <div
-                      key={s.query}
-                      className="flex items-center justify-between p-3 rounded-lg bg-overlay-5 text-sm"
-                    >
-                      <span className="truncate">{s.query}</span>
-                      <span className="text-text-muted text-xs">
-                        {s._count.query}×
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
+          )}
+          {tab === "traffic" && <TrafficPanel password={pwd} window={window} />}
+          {tab === "geography" && <GeographyPanel password={pwd} window={window} />}
+          {tab === "medicines" && <MedicinesPanel password={pwd} window={window} />}
+          {tab === "search" && <SearchPanel password={pwd} window={window} />}
+          {tab === "clicks" && <ClicksPanel password={pwd} window={window} />}
+          {tab === "uploads" && <UploadsPanel password={pwd} window={window} />}
+          {tab === "jaushadhi" && <JanAushadhiPanel password={pwd} window={window} />}
+          {tab === "pricing" && <PricingPanel password={pwd} window={window} />}
+          {tab === "ops" && <OpsAndScrapes password={pwd} window={window} />}
+        </div>
       </main>
     </>
+  );
+}
+
+function OpsAndScrapes({ password, window }: { password: string; window: Window }) {
+  const [scrapeData, setScrapeData] = useState<{
+    jobs: Job[];
+    topSearches: { query: string; _count: { query: number } }[];
+    stats: { totalMedicines: number; totalListings: number; totalStores: number };
+  } | null>(null);
+  const [triggerQuery, setTriggerQuery] = useState("");
+  const [triggerPharmacy, setTriggerPharmacy] = useState("all");
+  const [triggering, setTriggering] = useState(false);
+  const [triggerResult, setTriggerResult] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const fetchScrape = async () => {
+    setLoading(true);
+    try {
+      const res = await apiFetch("/api/admin/scrape-status", {
+        headers: { "x-admin-password": password },
+      });
+      if (res.ok) setScrapeData(await res.json());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchScrape();
+  }, [password]);
+
+  const trigger = async () => {
+    if (!triggerQuery) return;
+    setTriggering(true);
+    setTriggerResult("");
+    try {
+      const res = await apiFetch("/api/admin/trigger-scrape", {
+        method: "POST",
+        headers: {
+          "x-admin-password": password,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: triggerQuery, pharmacy: triggerPharmacy }),
+      });
+      const d = await res.json();
+      setTriggerResult(
+        res.ok
+          ? `OK — ${d.count} listings scraped (job ${d.jobId})`
+          : `Error: ${d.error ?? res.status}`
+      );
+      fetchScrape();
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3">
+        <div className="glass-card p-4">
+          <div className="text-[11px] uppercase tracking-wider text-text-muted">Medicines</div>
+          <div className="font-display font-bold text-3xl">{scrapeData?.stats.totalMedicines ?? "—"}</div>
+        </div>
+        <div className="glass-card p-4">
+          <div className="text-[11px] uppercase tracking-wider text-text-muted">Listings</div>
+          <div className="font-display font-bold text-3xl">{scrapeData?.stats.totalListings ?? "—"}</div>
+        </div>
+        <div className="glass-card p-4">
+          <div className="text-[11px] uppercase tracking-wider text-text-muted">JA Stores</div>
+          <div className="font-display font-bold text-3xl">{scrapeData?.stats.totalStores ?? "—"}</div>
+        </div>
+      </div>
+
+      <OpsPanel password={password} window={window} />
+
+      <div className="glass-card p-4">
+        <div className="flex items-baseline justify-between mb-3">
+          <div className="text-[11px] uppercase tracking-wider text-text-muted">Trigger scrape</div>
+          <button
+            onClick={fetchScrape}
+            className="text-xs text-text-secondary hover:text-white flex items-center gap-1"
+          >
+            <RefreshCw size={11} className={loading ? "animate-spin" : ""} /> Refresh
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={triggerQuery}
+            onChange={(e) => setTriggerQuery(e.target.value)}
+            placeholder='Medicine name (e.g. "Crocin 650")'
+            className="flex-1 min-w-[200px] px-3 py-2 rounded-xl bg-overlay-5 border border-overlay-10 text-sm focus:border-purple-400 outline-none"
+          />
+          <select
+            value={triggerPharmacy}
+            onChange={(e) => setTriggerPharmacy(e.target.value)}
+            className="px-3 py-2 rounded-xl bg-overlay-5 border border-overlay-10 text-sm"
+          >
+            {PHARMACIES.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={trigger}
+            disabled={!triggerQuery || triggering}
+            className="px-4 py-2 rounded-xl bg-purple-400 text-ink-950 font-semibold text-sm hover:bg-purple-300 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {triggering ? <Loader2 className="animate-spin" size={14} /> : <Play size={14} />}
+            Run
+          </button>
+        </div>
+        {triggerResult && <div className="text-xs text-text-secondary mt-2">{triggerResult}</div>}
+      </div>
+
+      {scrapeData?.topSearches && scrapeData.topSearches.length > 0 && (
+        <div className="glass-card p-4">
+          <div className="text-[11px] uppercase tracking-wider text-text-muted mb-3">Top searches (all-time)</div>
+          <table className="w-full text-sm">
+            <tbody>
+              {scrapeData.topSearches.map((r, i) => (
+                <tr key={r.query} className="border-t border-overlay-5 first:border-t-0">
+                  <td className="py-1.5 text-text-muted w-6">{i + 1}</td>
+                  <td className="py-1.5 font-mono text-xs">{r.query}</td>
+                  <td className="py-1.5 text-right">{r._count.query}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {scrapeData?.jobs && scrapeData.jobs.length > 0 && (
+        <div className="glass-card p-4">
+          <div className="text-[11px] uppercase tracking-wider text-text-muted mb-3">Recent scrape jobs</div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-text-muted text-[10px] uppercase tracking-wider">
+                <th className="text-left py-2">When</th>
+                <th className="text-left py-2">Pharmacy</th>
+                <th className="text-left py-2">Status</th>
+                <th className="text-right py-2">Scraped</th>
+                <th className="text-left py-2">Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scrapeData.jobs.slice(0, 20).map((j) => (
+                <tr key={j.id} className="border-t border-overlay-5">
+                  <td className="py-1.5 text-text-muted text-xs">{timeAgo(new Date(j.startedAt))}</td>
+                  <td className="py-1.5">{j.pharmacy}</td>
+                  <td className={`py-1.5 ${j.status === "success" ? "text-emerald-300" : j.status === "failed" ? "text-red-300" : "text-amber-300"}`}>{j.status}</td>
+                  <td className="py-1.5 text-right">{j.medicinesScraped ?? "—"}</td>
+                  <td className="py-1.5 text-xs text-red-300 truncate max-w-[260px]">{j.errorMessage ?? ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }

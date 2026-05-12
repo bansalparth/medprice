@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { readSid } from "@/lib/tracking";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,17 @@ export async function GET(
   { params }: { params: { pharmacy: string; medicineId: string } }
 ) {
   const pincode = req.nextUrl.searchParams.get("pincode") ?? null;
+  const searchLogId = req.nextUrl.searchParams.get("sl") ?? null;
+  const positionParam = req.nextUrl.searchParams.get("pos");
+  const position = positionParam ? Number(positionParam) : null;
+  const priceParam = req.nextUrl.searchParams.get("p");
+  const sellingPriceAtClick = priceParam ? Number(priceParam) : null;
+  const mrpParam = req.nextUrl.searchParams.get("m");
+  const mrpAtClick = mrpParam ? Number(mrpParam) : null;
+  const isCheapest = req.nextUrl.searchParams.get("c") === "1";
+  const isJa = req.nextUrl.searchParams.get("ja") === "1";
+  const sid = readSid(req);
+
   const listing = await prisma.pharmacyListing.findFirst({
     where: { pharmacyName: params.pharmacy, medicineId: params.medicineId },
     orderBy: { sellingPrice: "asc" },
@@ -37,6 +49,20 @@ export async function GET(
         pharmacyName: params.pharmacy,
         medicineId: params.medicineId,
         productUrl: listing.productUrl,
+        sid: sid ?? null,
+        searchLogId: searchLogId ?? null,
+        position: position != null && Number.isFinite(position) ? position : null,
+        sellingPriceAtClick:
+          sellingPriceAtClick != null && Number.isFinite(sellingPriceAtClick)
+            ? sellingPriceAtClick
+            : listing.sellingPrice ?? null,
+        mrpAtClick:
+          mrpAtClick != null && Number.isFinite(mrpAtClick)
+            ? mrpAtClick
+            : listing.mrp ?? null,
+        isCheapestShown: isCheapest,
+        isJanAushadhi: isJa,
+        pincode: pincode ?? null,
       },
     })
     .catch(() => {});

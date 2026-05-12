@@ -75,6 +75,7 @@ interface SearchResponse {
   cached?: boolean;
   stale?: boolean;
   message?: string;
+  searchLogId?: string | null;
 }
 
 interface Props {
@@ -105,6 +106,7 @@ export function ResultsView({ medicineId, query }: Props) {
   const [medicine, setMedicine] = useState<MedicineData | null>(null);
   const [stale, setStale] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [searchLogId, setSearchLogId] = useState<string | null>(null);
   const [pendingPharmacies, setPendingPharmacies] = useState<Set<string>>(
     () => new Set(EXPECTED_PHARMACIES)
   );
@@ -152,6 +154,7 @@ export function ResultsView({ medicineId, query }: Props) {
       setPendingPharmacies(new Set(EXPECTED_PHARMACIES));
       setMessage(null);
       setError(null);
+      setSearchLogId(null);
 
       try {
         const r = await apiFetch(`/api/search?${params}`, {
@@ -168,6 +171,7 @@ export function ResultsView({ medicineId, query }: Props) {
           setMedicine(d.medicine);
           setStale(!!d.stale);
           setMessage(d.message ?? null);
+          setSearchLogId(d.searchLogId ?? null);
           setPendingPharmacies(new Set());
           setStreamDone(true);
           CLIENT_CACHE.set(cacheKey, { data: d, ts: Date.now() });
@@ -203,6 +207,7 @@ export function ResultsView({ medicineId, query }: Props) {
               finalMedicine = msg.medicine;
               setMedicine(msg.medicine);
               setStale(!!msg.stale);
+              if (msg.searchLogId) setSearchLogId(msg.searchLogId);
             } else if (msg.type === "listing") {
               setPendingPharmacies((prev) => {
                 if (!prev.has(msg.pharmacy)) return prev;
@@ -474,6 +479,8 @@ export function ResultsView({ medicineId, query }: Props) {
                 medicineId={medicine.id}
                 isCheapest={l.id === cheapest?.id}
                 index={i}
+                searchLogId={searchLogId}
+                position={i + 1}
               />
             ))}
 
@@ -540,6 +547,8 @@ export function ResultsView({ medicineId, query }: Props) {
                       medicineId={medicine.id}
                       isCheapest={false}
                       index={inStockListings.length + i}
+                      searchLogId={searchLogId}
+                      position={inStockListings.length + i + 1}
                     />
                   ))}
               </div>

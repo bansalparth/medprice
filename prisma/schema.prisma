@@ -150,22 +150,129 @@ model ScrapeJob {
 }
 
 model SearchLog {
-  id               String    @id @default(cuid())
-  query            String
-  medicineId       String?
-  medicine         Medicine? @relation(fields: [medicineId], references: [id], onDelete: SetNull)
-  inputMethod      String
-  resultsCount     Int?
-  janAushadhiMatch Boolean   @default(false)
-  createdAt        DateTime  @default(now())
+  id                 String    @id @default(cuid())
+  query              String
+  medicineId         String?
+  medicine           Medicine? @relation(fields: [medicineId], references: [id], onDelete: SetNull)
+  inputMethod        String
+  resultsCount       Int?
+  janAushadhiMatch   Boolean   @default(false)
+  sid                String?
+  pincode            String?
+  city               String?
+  state              String?
+  latencyMs          Int?
+  autocompletePicked Boolean   @default(false)
+  refinedFromId      String?
+  createdAt          DateTime  @default(now())
+
+  impressions SearchImpression[]
+  clicks      ClickLog[]
+
+  @@index([createdAt])
+  @@index([sid, createdAt])
+  @@index([pincode])
+  @@index([medicineId, createdAt])
 }
 
 model ClickLog {
-  id           String   @id @default(cuid())
-  pharmacyName String
-  medicineId   String
-  productUrl   String
-  createdAt    DateTime @default(now())
+  id                  String     @id @default(cuid())
+  pharmacyName        String
+  medicineId          String
+  productUrl          String
+  sid                 String?
+  searchLogId         String?
+  searchLog           SearchLog? @relation(fields: [searchLogId], references: [id], onDelete: SetNull)
+  position            Int?
+  sellingPriceAtClick Float?
+  mrpAtClick          Float?
+  isCheapestShown     Boolean    @default(false)
+  isJanAushadhi       Boolean    @default(false)
+  pincode             String?
+  createdAt           DateTime   @default(now())
+
+  @@index([createdAt])
+  @@index([sid, createdAt])
+  @@index([searchLogId])
+  @@index([pharmacyName, createdAt])
+}
+
+model Session {
+  sid            String   @id
+  firstSeenAt    DateTime @default(now())
+  lastSeenAt     DateTime @updatedAt
+  userAgent      String?
+  deviceClass    String?
+  referrer       String?
+  pincode        String?
+  city           String?
+  state          String?
+  country        String?
+  lat            Float?
+  lng            Float?
+  locationSource String?
+
+  @@index([firstSeenAt])
+  @@index([lastSeenAt])
+  @@index([state, city])
+  @@index([pincode])
+}
+
+model PageView {
+  id        String   @id @default(cuid())
+  sid       String
+  path      String
+  referrer  String?
+  meta      String?
+  createdAt DateTime @default(now())
+
+  @@index([sid, createdAt])
+  @@index([createdAt])
+  @@index([path, createdAt])
+}
+
+model OcrUpload {
+  id            String   @id @default(cuid())
+  sid           String?
+  fileSizeBytes Int?
+  mimeType      String?
+  medsExtracted Int      @default(0)
+  succeeded     Boolean  @default(false)
+  latencyMs     Int?
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([sid])
+}
+
+model ApiLog {
+  id         String   @id @default(cuid())
+  route      String
+  method     String
+  statusCode Int
+  ms         Int
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt, route])
+  @@index([statusCode, createdAt])
+}
+
+model SearchImpression {
+  id            String    @id @default(cuid())
+  searchLogId   String
+  searchLog     SearchLog @relation(fields: [searchLogId], references: [id], onDelete: Cascade)
+  medicineId    String
+  pharmacyName  String
+  position      Int
+  sellingPrice  Float?
+  mrp           Float?
+  isJanAushadhi Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+
+  @@index([searchLogId])
+  @@index([pharmacyName, createdAt])
+  @@index([createdAt])
 }
 
 model PriceHistory {

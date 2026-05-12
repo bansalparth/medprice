@@ -17,22 +17,26 @@ export function middleware(request: NextRequest) {
 
   if (!pathname.startsWith("/api")) return NextResponse.next();
 
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown";
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
+  const skipsRateLimit =
+    pathname.startsWith("/api/admin/") || pathname.startsWith("/api/track/");
+  if (!skipsRateLimit) {
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+    const now = Date.now();
+    const entry = rateLimitMap.get(ip);
 
-  if (!entry || now > entry.resetTime) {
-    rateLimitMap.set(ip, { count: 1, resetTime: now + WINDOW_MS });
-  } else {
-    entry.count++;
-    if (entry.count > MAX_REQUESTS) {
-      return NextResponse.json(
-        { error: "Too many requests" },
-        { status: 429, headers: { "Retry-After": "60" } }
-      );
+    if (!entry || now > entry.resetTime) {
+      rateLimitMap.set(ip, { count: 1, resetTime: now + WINDOW_MS });
+    } else {
+      entry.count++;
+      if (entry.count > MAX_REQUESTS) {
+        return NextResponse.json(
+          { error: "Too many requests" },
+          { status: 429, headers: { "Retry-After": "60" } }
+        );
+      }
     }
   }
 
@@ -54,7 +58,11 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  if (!pathname.startsWith("/api/go/")) {
+  const skipsClientHeader =
+    pathname.startsWith("/api/go/") ||
+    pathname.startsWith("/api/track/") ||
+    pathname.startsWith("/api/admin/");
+  if (!skipsClientHeader) {
     const clientHeader = request.headers.get("x-medprice-client");
     if (!clientHeader) {
       return NextResponse.json({ error: "Missing client identifier" }, { status: 403 });
