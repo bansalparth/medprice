@@ -31,8 +31,14 @@ export function Header() {
             <span className="text-xs">
               {location ? (
                 <>
-                  {location.city ?? "—"}
-                  {location.pincode && ` · ${location.pincode}`}
+                  {/* Fall through: city → pincode → state → coords. Never
+                      render bare "—" — that's what users were reporting as
+                      a "blank" location even though we'd captured one. */}
+                  {location.city ??
+                    location.pincode ??
+                    location.state ??
+                    `${location.lat.toFixed(2)},${location.lng.toFixed(2)}`}
+                  {location.city && location.pincode && ` · ${location.pincode}`}
                 </>
               ) : (
                 "Set location"
