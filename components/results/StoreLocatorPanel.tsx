@@ -13,7 +13,7 @@ interface Store {
   address?: string | null;
   lat?: number | null;
   lng?: number | null;
-  distanceKm: number;
+  distanceKm?: number;
 }
 
 export function StoreLocatorPanel({
@@ -137,9 +137,11 @@ export function StoreLocatorPanel({
                           {s.address}
                         </div>
                       </div>
-                      <span className="px-2 py-1 rounded-full bg-accent-green/10 text-accent-green text-[11px] font-medium shrink-0">
-                        {s.distanceKm.toFixed(1)} km
-                      </span>
+                      {s.distanceKm != null && (
+                        <span className="px-2 py-1 rounded-full bg-accent-green/10 text-accent-green text-[11px] font-medium shrink-0">
+                          {s.distanceKm.toFixed(1)} km
+                        </span>
+                      )}
                     </div>
                     {s.lat && s.lng && (
                       <a
