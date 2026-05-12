@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { notFound } from "next/navigation";
 import { Header } from "@/components/Header";
 import { Lock, Play, RefreshCw, Loader2 } from "lucide-react";
 import { timeAgo } from "@/lib/utils";
@@ -66,7 +65,7 @@ interface Job {
 }
 
 export default function AdminPage() {
-  const [unlocked, setUnlocked] = useState<boolean | null>(null);
+  const [user, setUser] = useState("");
   const [pwd, setPwd] = useState("");
   const [authed, setAuthed] = useState(false);
   const [authError, setAuthError] = useState("");
@@ -75,38 +74,36 @@ export default function AdminPage() {
   const [window, setWindow] = useState<Window>("24h");
 
   useEffect(() => {
-    const ok = new URLSearchParams(globalThis.location?.search ?? "").get("u") === "1";
-    setUnlocked(ok);
-    if (!ok) return;
-    const saved = sessionStorage.getItem("medprice_admin");
-    if (saved) {
-      setPwd(saved);
+    const savedUser = sessionStorage.getItem("medprice_admin_user");
+    const savedPwd = sessionStorage.getItem("medprice_admin");
+    if (savedUser && savedPwd) {
+      setUser(savedUser);
+      setPwd(savedPwd);
       setAuthed(true);
     }
   }, []);
 
   const submitPwd = async () => {
-    if (!pwd) return;
+    if (!user || !pwd) return;
     setAuthChecking(true);
     setAuthError("");
     try {
       const res = await apiFetch("/api/admin/metrics/live", {
-        headers: { "x-admin-password": pwd },
+        headers: { "x-admin-user": user, "x-admin-password": pwd },
       });
       if (res.status === 401) {
-        setAuthError("Wrong password");
+        setAuthError("Wrong username or password");
         sessionStorage.removeItem("medprice_admin");
+        sessionStorage.removeItem("medprice_admin_user");
         return;
       }
       sessionStorage.setItem("medprice_admin", pwd);
+      sessionStorage.setItem("medprice_admin_user", user);
       setAuthed(true);
     } finally {
       setAuthChecking(false);
     }
   };
-
-  if (unlocked === null) return null;
-  if (unlocked === false) notFound();
 
   if (!authed) {
     return (
@@ -119,8 +116,18 @@ export default function AdminPage() {
               <h1 className="font-display font-bold text-xl">Admin</h1>
             </div>
             <input
-              type="password"
+              type="text"
               autoFocus
+              autoComplete="username"
+              value={user}
+              onChange={(e) => setUser(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitPwd()}
+              placeholder="Username"
+              className="w-full px-4 py-3 rounded-xl bg-overlay-5 border border-overlay-10 focus:border-purple-400 outline-none mb-2"
+            />
+            <input
+              type="password"
+              autoComplete="current-password"
               value={pwd}
               onChange={(e) => setPwd(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitPwd()}
@@ -130,7 +137,7 @@ export default function AdminPage() {
             {authError && <div className="text-red-300 text-sm mt-2">{authError}</div>}
             <button
               onClick={submitPwd}
-              disabled={authChecking || !pwd}
+              disabled={authChecking || !user || !pwd}
               className="w-full mt-3 px-4 py-3 rounded-xl bg-purple-400 text-ink-950 font-semibold hover:bg-purple-300 disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {authChecking ? <Loader2 className="animate-spin" size={16} /> : "Unlock"}
@@ -165,7 +172,7 @@ export default function AdminPage() {
         </div>
 
         <div className="mb-4">
-          <LiveStrip password={pwd} />
+          <LiveStrip user={user} password={pwd} />
         </div>
 
         <div className="flex gap-1 mb-4 overflow-x-auto border-b border-overlay-5 pb-px">
@@ -187,26 +194,26 @@ export default function AdminPage() {
         <div className="pb-12">
           {tab === "overview" && (
             <div className="space-y-4">
-              <FunnelPanel password={pwd} window={window} />
-              <TrafficPanel password={pwd} window={window} />
+              <FunnelPanel user={user} password={pwd} window={window} />
+              <TrafficPanel user={user} password={pwd} window={window} />
             </div>
           )}
-          {tab === "traffic" && <TrafficPanel password={pwd} window={window} />}
-          {tab === "geography" && <GeographyPanel password={pwd} window={window} />}
-          {tab === "medicines" && <MedicinesPanel password={pwd} window={window} />}
-          {tab === "search" && <SearchPanel password={pwd} window={window} />}
-          {tab === "clicks" && <ClicksPanel password={pwd} window={window} />}
-          {tab === "uploads" && <UploadsPanel password={pwd} window={window} />}
-          {tab === "jaushadhi" && <JanAushadhiPanel password={pwd} window={window} />}
-          {tab === "pricing" && <PricingPanel password={pwd} window={window} />}
-          {tab === "ops" && <OpsAndScrapes password={pwd} window={window} />}
+          {tab === "traffic" && <TrafficPanel user={user} password={pwd} window={window} />}
+          {tab === "geography" && <GeographyPanel user={user} password={pwd} window={window} />}
+          {tab === "medicines" && <MedicinesPanel user={user} password={pwd} window={window} />}
+          {tab === "search" && <SearchPanel user={user} password={pwd} window={window} />}
+          {tab === "clicks" && <ClicksPanel user={user} password={pwd} window={window} />}
+          {tab === "uploads" && <UploadsPanel user={user} password={pwd} window={window} />}
+          {tab === "jaushadhi" && <JanAushadhiPanel user={user} password={pwd} window={window} />}
+          {tab === "pricing" && <PricingPanel user={user} password={pwd} window={window} />}
+          {tab === "ops" && <OpsAndScrapes user={user} password={pwd} window={window} />}
         </div>
       </main>
     </>
   );
 }
 
-function OpsAndScrapes({ password, window }: { password: string; window: Window }) {
+function OpsAndScrapes({ user, password, window }: { user: string; password: string; window: Window }) {
   const [scrapeData, setScrapeData] = useState<{
     jobs: Job[];
     topSearches: { query: string; _count: { query: number } }[];
@@ -222,7 +229,7 @@ function OpsAndScrapes({ password, window }: { password: string; window: Window 
     setLoading(true);
     try {
       const res = await apiFetch("/api/admin/scrape-status", {
-        headers: { "x-admin-password": password },
+        headers: { "x-admin-user": user, "x-admin-password": password },
       });
       if (res.ok) setScrapeData(await res.json());
     } finally {
@@ -232,7 +239,7 @@ function OpsAndScrapes({ password, window }: { password: string; window: Window 
 
   useEffect(() => {
     fetchScrape();
-  }, [password]);
+  }, [user, password]);
 
   const trigger = async () => {
     if (!triggerQuery) return;
@@ -242,6 +249,7 @@ function OpsAndScrapes({ password, window }: { password: string; window: Window 
       const res = await apiFetch("/api/admin/trigger-scrape", {
         method: "POST",
         headers: {
+          "x-admin-user": user,
           "x-admin-password": password,
           "Content-Type": "application/json",
         },
@@ -276,7 +284,7 @@ function OpsAndScrapes({ password, window }: { password: string; window: Window 
         </div>
       </div>
 
-      <OpsPanel password={password} window={window} />
+      <OpsPanel user={user} password={password} window={window} />
 
       <div className="glass-card p-4">
         <div className="flex items-baseline justify-between mb-3">

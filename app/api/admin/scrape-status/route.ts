@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { checkAdmin } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  const auth = req.headers.get("x-admin-password");
-  if (auth !== process.env.ADMIN_PASSWORD) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = checkAdmin(req);
+  if (denied) return denied;
 
   const [jobs, topSearches, totalMedicines, totalListings, totalStores] =
     await Promise.all([

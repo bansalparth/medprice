@@ -22,13 +22,14 @@ const COLORS = ["#a78bfa", "#34d399", "#60a5fa", "#fbbf24", "#f472b6", "#22d3ee"
 type Window = "1h" | "24h" | "7d" | "30d" | "all";
 
 interface PanelProps {
+  user: string;
   password: string;
   window: Window;
 }
 
-async function fetchPanel(name: string, window: Window, password: string) {
+async function fetchPanel(name: string, window: Window, user: string, password: string) {
   const res = await fetch(`/api/admin/metrics?panel=${name}&window=${window}`, {
-    headers: { "x-admin-password": password },
+    headers: { "x-admin-user": user, "x-admin-password": password },
   });
   if (!res.ok) throw new Error(`${name} failed: ${res.status}`);
   const json = await res.json();
@@ -44,7 +45,7 @@ function usePanel<T>(name: string, props: PanelProps): { data: T | null; loading
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchPanel(name, props.window, props.password)
+    fetchPanel(name, props.window, props.user, props.password)
       .then((d) => {
         if (!cancelled) setData(d);
       })
@@ -57,7 +58,7 @@ function usePanel<T>(name: string, props: PanelProps): { data: T | null; loading
     return () => {
       cancelled = true;
     };
-  }, [name, props.window, props.password]);
+  }, [name, props.window, props.user, props.password]);
 
   return { data, loading, error };
 }
@@ -857,7 +858,7 @@ export function FunnelPanel(props: PanelProps) {
 
 /* ───────────── LIVE STRIP ───────────── */
 
-export function LiveStrip({ password }: { password: string }) {
+export function LiveStrip({ user, password }: { user: string; password: string }) {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -866,7 +867,7 @@ export function LiveStrip({ password }: { password: string }) {
     const fetchOnce = async () => {
       try {
         const res = await fetch("/api/admin/metrics/live", {
-          headers: { "x-admin-password": password },
+          headers: { "x-admin-user": user, "x-admin-password": password },
         });
         if (!res.ok) throw new Error(String(res.status));
         const json = await res.json();
@@ -884,7 +885,7 @@ export function LiveStrip({ password }: { password: string }) {
       cancelled = true;
       clearInterval(t);
     };
-  }, [password]);
+  }, [user, password]);
 
   if (!data) {
     return (
