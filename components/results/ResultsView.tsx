@@ -4,9 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertCircle, Pill, ShieldX, Stethoscope, ChevronDown, RefreshCw } from "lucide-react";
 import { PriceCard } from "./PriceCard";
+import { PriceCardSkeleton } from "./PriceCardSkeleton";
 import { JanAushadhiCard } from "./JanAushadhiCard";
 import { StoreLocatorPanel } from "./StoreLocatorPanel";
-import { SearchProgress } from "./SearchProgress";
 import { DrugInfo } from "./DrugInfo";
 import { apiFetch } from "@/lib/api-client";
 import { Alternatives } from "./Alternatives";
@@ -77,18 +77,37 @@ interface Props {
   query?: string;
 }
 
+// Pharmacies we expect to hear from. Used to render skeleton cards while a
+// streaming search is in flight. Kept in sync with `SCRAPERS` in lib/scrapers.
+// Apollo runs only in the cron worker (browser-based), so we don't expect it
+// to respond on Vercel — keep it out of the skeleton set.
+const EXPECTED_PHARMACIES = [
+  "1mg",
+  "pharmeasy",
+  "netmeds",
+  "truemeds",
+  "mrmed",
+];
+
 // Module-level memory cache so navigating away and back to the same medicine
 // (within the user's session) renders instantly without hitting the network.
-// Capped TTL so users still see a refresh after a few minutes.
 const CLIENT_CACHE = new Map<string, { data: SearchResponse; ts: number }>();
 const CLIENT_TTL_MS = 5 * 60 * 1000;
 
 export function ResultsView({ medicineId, query }: Props) {
-  const [loading, setLoading] = useState(true);
+  // Once `medicine` is non-null we stop showing the full-page loading state.
+  // Per-pharmacy skeletons cover the partial-results phase.
+  const [medicine, setMedicine] = useState<MedicineData | null>(null);
+  const [stale, setStale] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [pendingPharmacies, setPendingPharmacies] = useState<Set<string>>(
+    () => new Set(EXPECTED_PHARMACIES)
+  );
+  const [streamDone, setStreamDone] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [data, setData] = useState<SearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [storePanelOpen, setStorePanelOpen] = useState(false);
+  const [showOos, setShowOos] = useState(false);
   const { location, ready: locationReady } = useLocation();
   const cancelledRef = useRef(false);
 
@@ -106,34 +125,117 @@ export function ResultsView({ medicineId, query }: Props) {
       if (!opts.refresh) {
         const hit = CLIENT_CACHE.get(cacheKey);
         if (hit && Date.now() - hit.ts < CLIENT_TTL_MS) {
-          setData(hit.data);
-          setLoading(false);
+          setMedicine(hit.data.medicine);
+          setStale(!!hit.data.stale);
+          setMessage(hit.data.message ?? null);
+          setPendingPharmacies(new Set());
+          setStreamDone(true);
           setError(null);
           return;
         }
       }
 
+      // Reset state for a fresh search.
       if (opts.refresh) {
         setRefreshing(true);
       } else {
-        setLoading(true);
-        setData(null);
+        setMedicine(null);
+        setStreamDone(false);
+        setPendingPharmacies(new Set(EXPECTED_PHARMACIES));
       }
+      setMessage(null);
       setError(null);
 
       try {
-        const r = await apiFetch(`/api/search?${params}`);
+        const r = await apiFetch(`/api/search?${params}`, {
+          headers: { Accept: "application/x-ndjson" },
+        });
         if (!r.ok) throw new Error(`Search failed: ${r.status}`);
-        const d: SearchResponse = await r.json();
-        if (!cancelledRef.current) {
-          setData(d);
+
+        const contentType = r.headers.get("content-type") ?? "";
+        if (!contentType.includes("ndjson") || !r.body) {
+          // Server returned plain JSON (FRESH/STALE cache hit). Render it
+          // as a single shot — equivalent to streamDone.
+          const d: SearchResponse = await r.json();
+          if (cancelledRef.current) return;
+          setMedicine(d.medicine);
+          setStale(!!d.stale);
+          setMessage(d.message ?? null);
+          setPendingPharmacies(new Set());
+          setStreamDone(true);
           CLIENT_CACHE.set(cacheKey, { data: d, ts: Date.now() });
+          return;
+        }
+
+        // Streaming path — parse NDJSON line-by-line.
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        const aggregatedListings: Listing[] = [];
+        let finalMedicine: MedicineData | null = null;
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (!line) continue;
+
+            let msg: any;
+            try {
+              msg = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            if (cancelledRef.current) return;
+
+            if (msg.type === "medicine") {
+              finalMedicine = msg.medicine;
+              setMedicine(msg.medicine);
+              setStale(!!msg.stale);
+            } else if (msg.type === "listing") {
+              setPendingPharmacies((prev) => {
+                if (!prev.has(msg.pharmacy)) return prev;
+                const next = new Set(prev);
+                next.delete(msg.pharmacy);
+                return next;
+              });
+              if (Array.isArray(msg.listings) && msg.listings.length > 0) {
+                aggregatedListings.push(...msg.listings);
+                setMedicine((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        listings: mergeListingsByPharmacy(
+                          prev.listings,
+                          msg.listings
+                        ),
+                      }
+                    : prev
+                );
+              }
+            } else if (msg.type === "done") {
+              setStreamDone(true);
+              setPendingPharmacies(new Set());
+            }
+          }
+        }
+
+        // Cache the final assembled result so back/forward nav is instant.
+        if (finalMedicine) {
+          const finalData: SearchResponse = {
+            medicine: { ...finalMedicine, listings: aggregatedListings },
+            stale: false,
+          };
+          CLIENT_CACHE.set(cacheKey, { data: finalData, ts: Date.now() });
         }
       } catch (err: any) {
         if (!cancelledRef.current) setError(err?.message ?? "Search failed");
       } finally {
         if (!cancelledRef.current) {
-          setLoading(false);
           setRefreshing(false);
         }
       }
@@ -142,10 +244,6 @@ export function ResultsView({ medicineId, query }: Props) {
   );
 
   useEffect(() => {
-    // Wait for the location context to finish hydrating from localStorage
-    // before firing the first search. Otherwise we'd fire once without a
-    // pincode (yielding city-less results and re-mounting <SearchProgress />
-    // once the real pincode arrives — the visible "refresh" flicker).
     if (!locationReady) return;
     cancelledRef.current = false;
     runSearch();
@@ -154,13 +252,14 @@ export function ResultsView({ medicineId, query }: Props) {
     };
   }, [runSearch, locationReady]);
 
-  const [showOos, setShowOos] = useState(false);
-
-  const medicine = data?.medicine;
+  const initialLoading = !medicine && !error;
   const allListings = medicine?.listings ?? [];
   const inStockListings = allListings.filter((l) => l.inStock);
   const oosListings = allListings.filter((l) => !l.inStock);
-  const listings = inStockListings;
+  const respondedPharmacies = new Set(allListings.map((l) => l.pharmacyName));
+  const stillPending = Array.from(pendingPharmacies).filter(
+    (p) => !respondedPharmacies.has(p)
+  );
   const cheapest = inStockListings.find((l) => l.sellingPrice != null);
   const cheapestPrice = cheapest?.sellingPrice ?? null;
   const janAushadhiMatch = medicine?.saltMappings?.[0]?.janAushadhiProduct ?? null;
@@ -175,15 +274,15 @@ export function ResultsView({ medicineId, query }: Props) {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
-      {loading && (
-        <SearchProgress
-          query={query ?? medicineId ?? "medicine"}
-          city={location?.city ?? null}
-          pincode={location?.pincode ?? null}
-        />
+      {initialLoading && (
+        <div className="space-y-3">
+          {EXPECTED_PHARMACIES.map((p, i) => (
+            <PriceCardSkeleton key={p} pharmacyName={p} index={i} />
+          ))}
+        </div>
       )}
 
-      {!loading && error && (
+      {error && (
         <div className="glass-card p-8 flex items-start gap-3 text-red-300">
           <AlertCircle size={20} />
           <div>
@@ -193,19 +292,18 @@ export function ResultsView({ medicineId, query }: Props) {
         </div>
       )}
 
-      {!loading && !error && !medicine && (
+      {!initialLoading && !error && !medicine && (
         <div className="glass-card p-12 text-center">
           <Pill size={32} className="mx-auto mb-4 text-text-muted" />
-          <h2 className="font-display font-bold text-xl mb-2">
-            No results
-          </h2>
+          <h2 className="font-display font-bold text-xl mb-2">No results</h2>
           <p className="text-text-secondary text-sm">
-            We couldn't find this medicine in any of the 6 pharmacies right now.
+            We couldn&apos;t find this medicine in any of the 6 pharmacies right
+            now.
           </p>
         </div>
       )}
 
-      {!loading && medicine && (
+      {medicine && (
         <>
           <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -250,11 +348,12 @@ export function ResultsView({ medicineId, query }: Props) {
                   <Stethoscope size={10} /> Rx required
                 </span>
               )}
-              {medicine.drugDetail && medicine.drugDetail.soldOnline === false && (
-                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-500/15 text-red-300 border border-red-500/30 flex items-center gap-1">
-                  <ShieldX size={10} /> Not sold online
-                </span>
-              )}
+              {medicine.drugDetail &&
+                medicine.drugDetail.soldOnline === false && (
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-500/15 text-red-300 border border-red-500/30 flex items-center gap-1">
+                    <ShieldX size={10} /> Not sold online
+                  </span>
+                )}
               {medicine.drugDetail?.soldOnline && (
                 <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/25">
                   Sold online
@@ -266,7 +365,7 @@ export function ResultsView({ medicineId, query }: Props) {
                 {medicine.saltComposition}
               </p>
             )}
-            {data?.stale && (
+            {stale && (
               <p className="text-xs text-yellow-400 mt-2">
                 Showing cached prices — live scrape returned no fresh results.
               </p>
@@ -296,7 +395,10 @@ export function ResultsView({ medicineId, query }: Props) {
                           vs the cheapest online pharmacy.
                         </>
                       ) : (
-                        <>The same molecule is available at a government store near you.</>
+                        <>
+                          The same molecule is available at a government store
+                          near you.
+                        </>
                       )}
                     </div>
                   </div>
@@ -311,37 +413,8 @@ export function ResultsView({ medicineId, query }: Props) {
           )}
 
           <div className="space-y-3">
-            {allListings.length === 0 && (
-              <div className="glass-card p-8 text-center">
-                {medicine.drugDetail?.soldOnline === false ? (
-                  <>
-                    <ShieldX
-                      size={28}
-                      className="mx-auto mb-3 text-red-300"
-                    />
-                    <div className="font-display font-semibold text-base mb-1">
-                      Not sold online in India
-                    </div>
-                    <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
-                      This medicine isn&apos;t listed by any online pharmacy.
-                      {janAushadhiMatch
-                        ? " A Jan Aushadhi generic alternative is available below — try a nearby store."
-                        : " Check a nearby pharmacy for availability."}
-                    </div>
-                  </>
-                ) : data?.message ? (
-                  <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
-                    {data.message}
-                  </div>
-                ) : (
-                  <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
-                    No live pharmacy listings yet. Our scrapers couldn&apos;t
-                    find it. Try again in a moment.
-                  </div>
-                )}
-              </div>
-            )}
-            {listings.map((l, i) => (
+            {/* Real listings (in stock) */}
+            {inStockListings.map((l, i) => (
               <PriceCard
                 key={l.id}
                 listing={l}
@@ -350,6 +423,48 @@ export function ResultsView({ medicineId, query }: Props) {
                 index={i}
               />
             ))}
+
+            {/* Skeletons for pharmacies still in flight */}
+            {stillPending.map((p, i) => (
+              <PriceCardSkeleton
+                key={`pending-${p}`}
+                pharmacyName={p}
+                index={inStockListings.length + i}
+              />
+            ))}
+
+            {/* "No results" block — only show after the stream is done and
+                we got nothing relevant. */}
+            {streamDone &&
+              allListings.length === 0 &&
+              stillPending.length === 0 && (
+                <div className="glass-card p-8 text-center">
+                  {medicine.drugDetail?.soldOnline === false ? (
+                    <>
+                      <ShieldX size={28} className="mx-auto mb-3 text-red-300" />
+                      <div className="font-display font-semibold text-base mb-1">
+                        Not sold online in India
+                      </div>
+                      <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
+                        This medicine isn&apos;t listed by any online pharmacy.
+                        {janAushadhiMatch
+                          ? " A Jan Aushadhi generic alternative is available below — try a nearby store."
+                          : " Check a nearby pharmacy for availability."}
+                      </div>
+                    </>
+                  ) : message ? (
+                    <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
+                      {message}
+                    </div>
+                  ) : (
+                    <div className="text-text-secondary text-sm leading-relaxed max-w-md mx-auto">
+                      No live pharmacy listings yet. Our scrapers couldn&apos;t
+                      find it. Try again in a moment.
+                    </div>
+                  )}
+                </div>
+              )}
+
             {oosListings.length > 0 && (
               <div className="mt-2">
                 <button
@@ -360,7 +475,9 @@ export function ResultsView({ medicineId, query }: Props) {
                     size={14}
                     className={`transition-transform ${showOos ? "rotate-180" : ""}`}
                   />
-                  {oosListings.length} {oosListings.length === 1 ? "pharmacy" : "pharmacies"} out of stock
+                  {oosListings.length}{" "}
+                  {oosListings.length === 1 ? "pharmacy" : "pharmacies"} out of
+                  stock
                 </button>
                 {showOos &&
                   oosListings.map((l, i) => (
@@ -396,7 +513,6 @@ export function ResultsView({ medicineId, query }: Props) {
             saltComposition={medicine.saltComposition}
             cheapestPharmacy={cheapest?.pharmacyName ?? null}
           />
-
         </>
       )}
 
@@ -406,4 +522,19 @@ export function ResultsView({ medicineId, query }: Props) {
       />
     </div>
   );
+}
+
+/**
+ * Merge a new batch of listings (all from one pharmacy) into the existing
+ * list. Replaces any prior entries for that pharmacy so a stream chunk
+ * overrides anything the cached "medicine" chunk may have included.
+ */
+function mergeListingsByPharmacy(
+  existing: Listing[],
+  incoming: Listing[]
+): Listing[] {
+  if (incoming.length === 0) return existing;
+  const incomingPharmacies = new Set(incoming.map((l) => l.pharmacyName));
+  const kept = existing.filter((l) => !incomingPharmacies.has(l.pharmacyName));
+  return [...kept, ...incoming];
 }

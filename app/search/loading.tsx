@@ -1,5 +1,13 @@
 import { Header } from "@/components/Header";
-import { SearchProgress } from "@/components/results/SearchProgress";
+import { PriceCardSkeleton } from "@/components/results/PriceCardSkeleton";
+
+const PLACEHOLDER_PHARMACIES = [
+  "1mg",
+  "pharmeasy",
+  "netmeds",
+  "truemeds",
+  "mrmed",
+];
 
 export default function SearchLoading() {
   return (
@@ -11,8 +19,10 @@ export default function SearchLoading() {
             <div className="h-10 w-full" />
           </div>
         </div>
-        <div className="max-w-5xl mx-auto px-4 py-8">
-          <SearchProgress query="medicine" city={null} pincode={null} />
+        <div className="max-w-5xl mx-auto px-4 py-8 space-y-3">
+          {PLACEHOLDER_PHARMACIES.map((p, i) => (
+            <PriceCardSkeleton key={p} pharmacyName={p} index={i} />
+          ))}
         </div>
       </main>
     </>

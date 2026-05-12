@@ -1,0 +1,313 @@
+/**
+ * Catalog-relevance filtering for scraped pharmacy listings.
+ *
+ * Pharmacies return cross-sells, related products, and wrong-strength
+ * variants in their search results. Before we display or persist anything
+ * we strip these down to listings that actually match the catalog medicine
+ * the user picked.
+ *
+ * All functions in this module are PURE (no DB, no network) so they can be
+ * called per-pharmacy in a streaming pipeline as well as on the bulk result
+ * set in the legacy code path.
+ */
+
+import type { ScrapedListing } from "@/lib/scrapers/types";
+
+const NOISE_TOKENS = new Set([
+  "tablet", "tablets", "capsule", "capsules", "tab", "tabs", "cap", "caps",
+  "strip", "strips", "bottle", "pack", "of", "syrup", "drops", "injection",
+  "cream", "gel", "ointment", "suspension", "solution", "sachet", "sachets",
+  "piece", "pieces", "unit", "units", "box", "jar", "carton", "ml", "mg",
+  "mcg", "gm", "g", "iu",
+]);
+
+const FORMULATION_SUFFIXES = [
+  "md", "odt", "dt", "sr", "er", "xl", "xr", "cr", "pr", "la", "ir", "fc",
+  "ec", "chewable",
+];
+
+const DOSAGE_FORM_GROUPS: Record<string, string[]> = {
+  tablet:      ["tablet", "tablets", "tab", "tabs"],
+  capsule:     ["capsule", "capsules", "cap", "caps", "softgel", "softgels"],
+  syrup:       ["syrup", "suspension", "oral solution", "liquid", "elixir"],
+  injection:   ["injection", "injections", "inj", "vial", "ampoule"],
+  drops:       ["drops", "drop"],
+  cream:       ["cream"],
+  gel:         ["gel"],
+  ointment:    ["ointment"],
+  inhaler:     ["inhaler", "rotacaps", "respules"],
+  spray:       ["spray"],
+  powder:      ["powder", "sachet", "granules"],
+  patch:       ["patch", "patches"],
+  suppository: ["suppository", "suppositories"],
+};
+
+const BUNDLE_RE =
+  /\b(combo|hamper|combination|with\s+free)\b|\bpack\s+of\s+([2-9]|\d{2,})\b|\bthermometer\b|&\s/i;
+
+function escapeRe(s: string): string {
+  return s.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function tokenRegex(tok: string): RegExp {
+  const esc = escapeRe(tok);
+  if (/^\d+(\.\d+)?$/.test(tok)) {
+    return new RegExp(`\\b${esc}(?:\\s?(?:mg|mcg|ml|gm|g|iu|%))?\\b`, "i");
+  }
+  return new RegExp(`\\b${esc}\\b`, "i");
+}
+
+/**
+ * Per-medicine context derived from the catalog row. Build once, reuse for
+ * every per-pharmacy filter call so we don't re-parse on each chunk.
+ */
+export interface FilterContext {
+  sourceText: string;
+  brandTokens: string[];
+  brandSet: Set<string>;
+  tokenRegexes: RegExp[];
+  primaryStrength: number | null;
+  primaryUnit: string | null;
+  catalogSuffixes: Set<string>;
+  catalogDosageGroup: string | null;
+}
+
+export function buildFilterContext(medRow: {
+  brandName?: string | null;
+  name?: string | null;
+  dosageForm?: string | null;
+  ingredients?: string | null;
+}): FilterContext {
+  const sourceText: string = medRow.brandName ?? medRow.name ?? "";
+
+  const brandTokens = sourceText
+    .toLowerCase()
+    .replace(/[^a-z0-9.\s]/g, " ")
+    .split(/\s+/)
+    .filter(
+      (t) =>
+        t.length >= 1 &&
+        t !== "." &&
+        !["tablet", "capsule", "syrup", "drops", "injection", "cream", "gel"].includes(t)
+    );
+
+  const tokenRegexes = brandTokens.map(tokenRegex);
+  const brandSet = new Set(brandTokens);
+
+  let primaryStrength: number | null = null;
+  let primaryUnit: string | null = null;
+  if (medRow.ingredients) {
+    try {
+      const parsed = JSON.parse(medRow.ingredients);
+      if (Array.isArray(parsed) && parsed[0]?.strength) {
+        primaryStrength = Number(parsed[0].strength);
+        primaryUnit = String(parsed[0].unit ?? "").toLowerCase();
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const catalogSuffixes = extractSuffixes(sourceText);
+  const catalogDosageGroup: string | null = medRow.dosageForm
+    ? detectDosageGroup(medRow.dosageForm) ?? detectDosageGroup(sourceText)
+    : detectDosageGroup(sourceText);
+
+  return {
+    sourceText,
+    brandTokens,
+    brandSet,
+    tokenRegexes,
+    primaryStrength,
+    primaryUnit,
+    catalogSuffixes,
+    catalogDosageGroup,
+  };
+}
+
+function isCountContext(name: string, num: number): boolean {
+  if (new RegExp(`\\b${num}\\s?'s\\b`, "i").test(name)) return true;
+  if (
+    new RegExp(
+      `(?:strip|pack|bottle|box|jar|carton)\\s+of\\s+${num}\\b`,
+      "i"
+    ).test(name)
+  )
+    return true;
+  if (
+    num < 50 &&
+    new RegExp(
+      `\\b${num}\\s?(?:tab(?:lets?)?|cap(?:sules?)?|drops?|sachets?|pieces?|units?)\\b`,
+      "i"
+    ).test(name)
+  )
+    return true;
+  return false;
+}
+
+function extractStrengths(name: string): number[] {
+  const lower = name.toLowerCase();
+  const out: number[] = [];
+
+  const unitMatches =
+    lower.match(/\b(\d+(?:\.\d+)?)\s?(?:mg|mcg|gm|iu|%)\b/g) ?? [];
+  for (const m of unitMatches) {
+    const n = parseFloat(m);
+    if (!isNaN(n)) out.push(n);
+  }
+
+  const bareMatches = lower.match(/\b(\d{2,4}(?:\.\d+)?)\b/g) ?? [];
+  for (const m of bareMatches) {
+    const n = parseFloat(m);
+    if (isNaN(n) || n < 50) continue;
+    if (out.includes(n)) continue;
+    if (new RegExp(`\\b${m}\\s?ml\\b`, "i").test(name)) continue;
+    if (isCountContext(name, n)) continue;
+    out.push(n);
+  }
+
+  return out;
+}
+
+function extractSuffixes(name: string): Set<string> {
+  const lower = name.toLowerCase();
+  const found = new Set<string>();
+  for (const sfx of FORMULATION_SUFFIXES) {
+    if (new RegExp(`\\b${sfx}\\b`, "i").test(lower)) {
+      found.add(sfx);
+    }
+  }
+  return found;
+}
+
+const KW_TO_GROUP = new Map<string, string>();
+for (const [group, kws] of Object.entries(DOSAGE_FORM_GROUPS)) {
+  for (const kw of kws) KW_TO_GROUP.set(kw, group);
+}
+
+function detectDosageGroup(text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const [kw, group] of KW_TO_GROUP) {
+    if (new RegExp(`\\b${kw}\\b`, "i").test(lower)) return group;
+  }
+  return null;
+}
+
+/**
+ * Drop cross-sells, bundles, wrong strengths, wrong formulations, and
+ * mismatched dosage forms. Mirrors the rules used by the bulk persist
+ * pipeline so the streaming path produces identical visible results.
+ */
+export function filterRelevantListings(
+  listings: ScrapedListing[],
+  ctx: FilterContext
+): ScrapedListing[] {
+  if (ctx.tokenRegexes.length === 0) return listings;
+
+  return listings.filter((s) => {
+    // 1. Reject obvious bundles / multi-packs
+    if (BUNDLE_RE.test(s.productName)) return false;
+
+    // 2. Brand tokens must all be present
+    if (!ctx.tokenRegexes.every((re) => re.test(s.productName))) return false;
+
+    // 3. Strength check
+    if (ctx.primaryStrength != null) {
+      const prodStrengths = extractStrengths(s.productName);
+      if (
+        prodStrengths.length > 0 &&
+        !prodStrengths.includes(ctx.primaryStrength)
+      ) {
+        return false;
+      }
+    }
+
+    // 4. Formulation suffix must match
+    const prodSuffixes = extractSuffixes(s.productName);
+    if (ctx.catalogSuffixes.size === 0 && prodSuffixes.size > 0) return false;
+    for (const sfx of ctx.catalogSuffixes) {
+      if (!prodSuffixes.has(sfx)) return false;
+    }
+
+    // 5. Dosage form must match
+    if (ctx.catalogDosageGroup) {
+      const prodGroup = detectDosageGroup(s.productName);
+      if (prodGroup && prodGroup !== ctx.catalogDosageGroup) return false;
+    }
+
+    // 6. Short-brand position check
+    if (ctx.brandTokens.length <= 2) {
+      const prodWords = s.productName
+        .toLowerCase()
+        .replace(/[^a-z0-9.\s]/g, " ")
+        .split(/\s+/)
+        .filter(Boolean);
+      const firstBrandIdx = prodWords.findIndex((w) =>
+        ctx.brandTokens.some((bt) => w === bt || w.startsWith(bt))
+      );
+      if (ctx.brandTokens.length === 1 && firstBrandIdx >= 3) return false;
+
+      const extraWords = prodWords.filter(
+        (w) =>
+          !ctx.brandSet.has(w) &&
+          !NOISE_TOKENS.has(w) &&
+          !/^\d+(\.\d+)?$/.test(w)
+      );
+      if (extraWords.length > 4) return false;
+    }
+
+    return true;
+  });
+}
+
+function scoreListing(
+  productName: string,
+  ctx: FilterContext
+): number {
+  const sourceLower = ctx.sourceText.toLowerCase();
+  const name = productName.toLowerCase();
+  let s = name.includes(sourceLower) ? 100 : 0;
+  const tokens = productName
+    .toLowerCase()
+    .replace(/[^a-z0-9.\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  for (const t of tokens) {
+    if (ctx.brandSet.has(t)) s += 5;
+    else if (!NOISE_TOKENS.has(t) && !/^\d+(\.\d+)?$/.test(t)) {
+      s -= 2;
+    }
+  }
+  s -= productName.length * 0.01;
+  return s;
+}
+
+/**
+ * Per-pharmacy dedup: pick the single best listing for each pharmacy.
+ * Tie-breaks favour in-stock then lowest price.
+ */
+export function pickBestPerPharmacy(
+  listings: ScrapedListing[],
+  ctx: FilterContext
+): ScrapedListing[] {
+  const best = new Map<string, ScrapedListing>();
+  const bestScore = new Map<string, number>();
+  for (const l of listings) {
+    const sc = scoreListing(l.productName, ctx);
+    const cur = bestScore.get(l.pharmacyName);
+    if (cur === undefined || sc > cur) {
+      best.set(l.pharmacyName, l);
+      bestScore.set(l.pharmacyName, sc);
+    } else if (sc === cur) {
+      const curListing = best.get(l.pharmacyName)!;
+      const curPrice = curListing.sellingPrice ?? curListing.mrp ?? Infinity;
+      const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
+      if (l.inStock && !curListing.inStock) {
+        best.set(l.pharmacyName, l);
+      } else if (l.inStock === curListing.inStock && newPrice < curPrice) {
+        best.set(l.pharmacyName, l);
+      }
+    }
+  }
+  return Array.from(best.values());
+}

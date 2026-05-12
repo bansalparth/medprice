@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { scrapeAll, type ScrapedListing } from "@/lib/scrapers";
+import { scrapeAll, scrapeAllStream, type ScrapedListing } from "@/lib/scrapers";
 import { findJanAushadhiMatch } from "@/lib/jan-aushadhi/matcher";
 import { normalizeMedicineName } from "@/lib/utils";
 import { estimateDelivery } from "@/lib/delivery";
 import { lookupDrugDetail } from "@/lib/drug-details";
 import { checkAll as checkServiceability } from "@/lib/scrapers/serviceability";
+import {
+  buildFilterContext,
+  filterRelevantListings,
+  pickBestPerPharmacy,
+} from "@/lib/search/filter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -169,7 +174,22 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // Live scrape using the precise brand+form query — dedupe concurrent calls.
+  // Cache miss → stream results to the client. Each pharmacy chunk is
+  // written the moment its scrape resolves; DB writes happen AFTER the
+  // final listing is sent so the user sees results in ~1s instead of
+  // waiting for the slowest pharmacy + DB writes (formerly 10–17s).
+  //
+  // Back-compat: if the caller doesn't accept NDJSON (e.g. tests, crawlers),
+  // fall through to the legacy blocking JSON path.
+  const acceptsStream = (req.headers.get("accept") ?? "").includes(
+    "application/x-ndjson"
+  );
+
+  if (acceptsStream) {
+    return buildStreamingResponse(medRow, scrapeQuery, pincode);
+  }
+
+  // Legacy non-streaming path (unchanged).
   const scrapeKey = `${scrapeQuery}::${pincode ?? ""}`;
   let scrapePromise = inflight.get(scrapeKey);
   if (!scrapePromise) {
@@ -226,6 +246,350 @@ export async function GET(req: NextRequest) {
     cached: false,
     pincode,
   });
+}
+
+/**
+ * Streaming search response (NDJSON, one JSON object per line).
+ *
+ * Sequence:
+ *   1. {type:"medicine", medicine}       — sent immediately (~50ms)
+ *   2. {type:"listing", pharmacy, listings} — one per pharmacy as it resolves
+ *   3. {type:"done"}                     — client clears any remaining skeletons
+ *   4. (function awaits DB writes invisibly, then closes the stream)
+ *
+ * Why the DB write sits between "done" and stream-close:
+ *   - User already sees all cards by the time "done" is sent.
+ *   - Vercel keeps the function alive while the stream is open, so writes
+ *     are guaranteed to complete (unlike fire-and-forget after `controller.close()`).
+ *   - Zero perceived latency cost.
+ */
+function buildStreamingResponse(
+  medRow: any,
+  scrapeQuery: string,
+  pincode: string | null
+): Response {
+  const ctx = buildFilterContext(medRow);
+  const isBrowserish =
+    typeof globalThis.process === "undefined" ||
+    process.env.NODE_ENV !== "production";
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enc = new TextEncoder();
+      const writeMsg = (obj: any) => {
+        try {
+          controller.enqueue(enc.encode(JSON.stringify(obj) + "\n"));
+        } catch (err) {
+          // Client disconnected — swallow and let cleanup happen below.
+          if (isBrowserish)
+            console.warn(
+              "[search-stream] enqueue failed:",
+              (err as Error).message
+            );
+        }
+      };
+
+      // (1) Medicine row — comes from a separate findUnique because the
+      // outer GET already read it; this guarantees we have saltMappings
+      // attached for the JA savings card.
+      const medWithMappings = await prisma.medicine
+        .findUnique({
+          where: { id: medRow.id },
+          include: {
+            // Don't send listings in the medicine chunk — they stream as
+            // separate per-pharmacy chunks below.
+            saltMappings: { include: { janAushadhiProduct: true } },
+          },
+        })
+        .catch(() => null);
+
+      writeMsg({
+        type: "medicine",
+        medicine: enrich(
+          { ...medWithMappings, listings: [] } as any,
+          pincode
+        ),
+        pincode,
+      });
+
+      // (2) Per-pharmacy streaming scrape. Each `onPharmacy` callback runs
+      // independently — including its own serviceability check — so the
+      // slowest pharmacy doesn't delay the others.
+      const finalListings: ScrapedListing[] = [];
+      const svcByPharmacy = new Map<string, any>();
+
+      await scrapeAllStream(scrapeQuery, pincode, async (pharmacyName, raw) => {
+        try {
+          // Filter cross-sells / bundles / wrong-strength variants.
+          const filtered = filterRelevantListings(raw, ctx);
+
+          // Per-pharmacy dedup: at most one listing comes back here since
+          // every entry shares the same pharmacyName.
+          const picked = pickBestPerPharmacy(filtered, ctx);
+
+          if (picked.length === 0) {
+            writeMsg({ type: "listing", pharmacy: pharmacyName, listings: [] });
+            return;
+          }
+
+          // Per-pharmacy serviceability — runs in parallel with every other
+          // pharmacy's serviceability because each `onPharmacy` is its own
+          // async chain. No barrier waiting for all scrapes to finish.
+          let enrichedPicked = picked;
+          if (pincode) {
+            const svcMap = await checkServiceability(picked, pincode).catch(
+              () => null
+            );
+            if (svcMap) {
+              enrichedPicked = picked.map((l) => {
+                const svc = svcMap.get(l.pharmacyName);
+                if (!svc) return l;
+                svcByPharmacy.set(l.pharmacyName, svc);
+                return {
+                  ...l,
+                  inStock: svc.inStock,
+                  sellingPrice: svc.price ?? l.sellingPrice,
+                  mrp: svc.mrp ?? l.mrp,
+                };
+              });
+            }
+          }
+
+          finalListings.push(...enrichedPicked);
+
+          // Shape each listing for the client (same fields as the JSON path).
+          const clientListings = enrichedPicked.map((l) => {
+            const svc = svcByPharmacy.get(l.pharmacyName);
+            const eta = svc
+              ? {
+                  eta:
+                    svc.deliveryEta ??
+                    estimateDelivery(l.pharmacyName, pincode).eta,
+                  serviceable: svc.serviceable,
+                }
+              : estimateDelivery(l.pharmacyName, pincode);
+            const hasPrice = l.sellingPrice != null || l.mrp != null;
+            const locationPrice =
+              svc?.price != null && svc.price !== l.sellingPrice
+                ? svc.price
+                : null;
+            return {
+              // Synthetic id (DB row may not exist yet). The client only uses
+              // this for React keys.
+              id: `stream-${l.pharmacyName}-${Date.now()}`,
+              medicineId: medRow.id,
+              pharmacyName: l.pharmacyName,
+              brandName: l.brandName ?? null,
+              productName: l.productName,
+              packSize: l.packSize ?? null,
+              mrp: l.mrp ?? null,
+              sellingPrice: l.sellingPrice ?? null,
+              discountPercent: l.discountPercent ?? null,
+              inStock: l.inStock && eta.serviceable && hasPrice,
+              productUrl: l.productUrl ?? null,
+              deliveryEta: eta.eta,
+              serviceable: eta.serviceable,
+              locationPrice,
+              pincode: pincode ?? null,
+              scrapedAt: new Date().toISOString(),
+            };
+          });
+
+          writeMsg({
+            type: "listing",
+            pharmacy: pharmacyName,
+            listings: clientListings,
+          });
+        } catch (err: any) {
+          console.error(
+            `[search-stream] ${pharmacyName} failed:`,
+            err?.message ?? err
+          );
+          writeMsg({ type: "listing", pharmacy: pharmacyName, listings: [] });
+        }
+      });
+
+      // (3) Tell the client we're done — they clear skeletons NOW, before
+      // we incur the DB-write latency below.
+      writeMsg({ type: "done", count: finalListings.length });
+
+      // (4) DB writes happen after "done" but BEFORE controller.close() so
+      // Vercel keeps the function alive. User has already rendered the page.
+      try {
+        await persistFinalListings(
+          medRow,
+          finalListings,
+          pincode,
+          svcByPharmacy
+        );
+      } catch (err: any) {
+        console.error(
+          "[search-stream] persistFinalListings failed:",
+          err?.message ?? err
+        );
+      }
+
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store",
+      // Disable proxy buffering so chunks reach the browser as written.
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+/**
+ * DB persistence for the streaming path. Takes already-filtered listings
+ * (no filtering inside) and writes:
+ *   - PharmacyListing rows (delete + createMany)
+ *   - PriceHistory snapshot per pharmacy
+ *   - SaltMapping to Jan Aushadhi
+ *   - Medicine row updates (saltComposition, brandName, packSize for non-catalog)
+ *
+ * All writes that don't depend on each other run in parallel.
+ */
+async function persistFinalListings(
+  medRow: any,
+  finalListings: ScrapedListing[],
+  pincode: string | null,
+  svcByPharmacy: Map<string, any>
+): Promise<void> {
+  if (finalListings.length === 0) return;
+
+  // Derive saltComposition (catalog trusts itself; non-catalog accepts scrape)
+  const newSalt =
+    finalListings.find((s) => s.saltComposition)?.saltComposition ?? null;
+  const saltComposition = medRow.isCatalog
+    ? medRow.saltComposition ?? newSalt
+    : newSalt ?? medRow.saltComposition;
+
+  // Auto-promote / refresh medicine row
+  const medUpdate: Promise<any> = medRow.isCatalog
+    ? saltComposition && !medRow.saltComposition
+      ? prisma.medicine
+          .update({
+            where: { id: medRow.id },
+            data: { saltComposition },
+          })
+          .then(() => null)
+          .catch(() => null)
+      : Promise.resolve(null)
+    : prisma.medicine
+        .update({
+          where: { id: medRow.id },
+          data: {
+            saltComposition: saltComposition ?? undefined,
+            brandName:
+              medRow.brandName ??
+              finalListings[0]?.brandName ??
+              medRow.name,
+            packSize: medRow.packSize ?? finalListings[0]?.packSize ?? undefined,
+          },
+        })
+        .then(() => null)
+        .catch(() => null);
+
+  // Delete old listings + create new ones (must be sequential within this
+  // pair, but can run in parallel with medUpdate / priceHistory below).
+  const listingWrite = prisma.pharmacyListing
+    .deleteMany({ where: { medicineId: medRow.id } })
+    .then(() =>
+      prisma.pharmacyListing.createMany({
+        data: finalListings.map((s) => {
+          const svc = svcByPharmacy.get(s.pharmacyName);
+          const eta = svc
+            ? {
+                eta:
+                  svc.deliveryEta ??
+                  estimateDelivery(s.pharmacyName, pincode).eta,
+                serviceable: svc.serviceable,
+              }
+            : estimateDelivery(s.pharmacyName, pincode);
+          const hasPrice = s.sellingPrice != null || s.mrp != null;
+          const locationPrice =
+            svc?.price != null && svc.price !== s.sellingPrice
+              ? svc.price
+              : null;
+          return {
+            medicineId: medRow.id,
+            pharmacyName: s.pharmacyName,
+            brandName: s.brandName,
+            productName: s.productName,
+            packSize: s.packSize,
+            mrp: s.mrp,
+            sellingPrice: s.sellingPrice,
+            discountPercent: s.discountPercent,
+            inStock: s.inStock && eta.serviceable && hasPrice,
+            productUrl: s.productUrl,
+            deliveryEta: eta.eta,
+            serviceable: eta.serviceable,
+            locationPrice,
+            pincode: pincode ?? null,
+          };
+        }),
+      })
+    );
+
+  // Price history snapshot
+  const cheapestPerPharmacy = new Map<
+    string,
+    { sellingPrice?: number; mrp?: number }
+  >();
+  for (const s of finalListings) {
+    if (!s.inStock) continue;
+    const cur = cheapestPerPharmacy.get(s.pharmacyName);
+    const price = s.sellingPrice ?? s.mrp;
+    if (price == null) continue;
+    if (!cur || (cur.sellingPrice ?? cur.mrp ?? Infinity) > price) {
+      cheapestPerPharmacy.set(s.pharmacyName, {
+        sellingPrice: s.sellingPrice,
+        mrp: s.mrp,
+      });
+    }
+  }
+
+  const historyWrite =
+    cheapestPerPharmacy.size > 0
+      ? prisma.priceHistory.createMany({
+          data: Array.from(cheapestPerPharmacy.entries()).map(
+            ([pharmacyName, p]) => ({
+              medicineId: medRow.id,
+              pharmacyName,
+              sellingPrice: p.sellingPrice,
+              mrp: p.mrp,
+            })
+          ),
+        })
+      : Promise.resolve(null);
+
+  // Salt mapping to Jan Aushadhi
+  const matchTarget = saltComposition ?? medRow.brandName ?? medRow.name;
+  const saltMappingWrite = findJanAushadhiMatch(matchTarget)
+    .then((match) => {
+      if (!match) return null;
+      return prisma.saltMapping.upsert({
+        where: {
+          medicineId_janAushadhiProductId: {
+            medicineId: medRow.id,
+            janAushadhiProductId: match.product.id,
+          },
+        },
+        update: { matchConfidence: match.confidence },
+        create: {
+          medicineId: medRow.id,
+          janAushadhiProductId: match.product.id,
+          matchConfidence: match.confidence,
+        },
+      });
+    })
+    .catch(() => null);
+
+  await Promise.all([medUpdate, listingWrite, historyWrite, saltMappingWrite]);
 }
 
 /**

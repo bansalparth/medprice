@@ -64,47 +64,76 @@ export interface ScrapeAllOpts {
   includeBrowser?: boolean;
 }
 
-export async function scrapeAll(
+/**
+ * Streaming variant: invokes `onPharmacy(name, listings)` the moment each
+ * pharmacy resolves (or returns nothing on timeout / error). Returns the
+ * aggregated list of all priced listings after every pharmacy has either
+ * completed or timed out — same shape as `scrapeAll` for back-compat.
+ *
+ * Use this when you want to emit per-pharmacy chunks to the client over
+ * NDJSON before the slowest pharmacy finishes.
+ */
+export async function scrapeAllStream(
   query: string,
-  pincode?: string | null,
+  pincode: string | null | undefined,
+  onPharmacy: (
+    pharmacy: string,
+    listings: ScrapedListing[]
+  ) => void | Promise<void>,
   opts: ScrapeAllOpts = {}
 ): Promise<ScrapedListing[]> {
   const active = SCRAPERS.filter(
     (s) => s.kind === "http" || (opts.includeBrowser && s.kind === "browser")
   );
 
-  // HTTP scrapers are independent and cheap — fire all in parallel.
-  const tasks = active.map((s) =>
-    withTimeout(s.fn(query, pincode), PER_SCRAPER_TIMEOUT_MS, s.name)
-  );
-  const results = await Promise.allSettled(tasks);
+  const aggregated: ScrapedListing[] = [];
 
-  const successful: ScrapedListing[] = [];
-  results.forEach((result, i) => {
-    const name = active[i].name;
-    if (result.status === "fulfilled") {
-      const priced = result.value.filter(
+  // Each pharmacy is its own promise: scrape → filter to priced → callback.
+  // The promise resolves only after onPharmacy is awaited so the caller can
+  // serialize its stream writes deterministically.
+  const tasks = active.map(async (s) => {
+    try {
+      const raw = await withTimeout(
+        s.fn(query, pincode),
+        PER_SCRAPER_TIMEOUT_MS,
+        s.name
+      );
+      const priced = raw.filter(
         (l) => l.sellingPrice != null || l.mrp != null
       );
       console.log(
-        `[scrape] ${name}: ${result.value.length} raw, ${priced.length} priced`
+        `[scrape] ${s.name}: ${raw.length} raw, ${priced.length} priced`
       );
-      successful.push(...priced);
-    } else {
+      aggregated.push(...priced);
+      await onPharmacy(s.name, priced);
+    } catch (err: any) {
       console.error(
-        `[scrape] ${name} failed:`,
-        result.reason?.message ?? result.reason
+        `[scrape] ${s.name} failed:`,
+        err?.message ?? err
       );
+      // Still emit an empty result so the client can drop the skeleton.
+      await onPharmacy(s.name, []);
     }
   });
 
-  successful.sort((a, b) => {
+  await Promise.all(tasks);
+  return aggregated;
+}
+
+export async function scrapeAll(
+  query: string,
+  pincode?: string | null,
+  opts: ScrapeAllOpts = {}
+): Promise<ScrapedListing[]> {
+  // Back-compat: callers that only want the aggregate use this; internally
+  // we delegate to the streaming variant with a no-op callback.
+  const all = await scrapeAllStream(query, pincode, () => {}, opts);
+  all.sort((a, b) => {
     const av = a.sellingPrice ?? a.mrp ?? Infinity;
     const bv = b.sellingPrice ?? b.mrp ?? Infinity;
     return av - bv;
   });
-
-  return successful;
+  return all;
 }
 
 export async function scrapeOne(
