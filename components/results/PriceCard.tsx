@@ -1,10 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Crown, ExternalLink, Package, Truck } from "lucide-react";
+import { Crown, ExternalLink, Loader2, Package, Truck } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "@/lib/location-context";
-import { etaToDateLabel } from "@/lib/delivery";
 
 const PHARMACY_LABELS: Record<
   string,
@@ -54,6 +53,9 @@ interface PriceCardProps {
     inStock: boolean;
     productUrl?: string | null;
     deliveryEta?: string | null;
+    /** True while the live serviceability/ETA call is still in flight.
+     *  Drives the "checking delivery…" inline placeholder. */
+    etaPending?: boolean;
     serviceable?: boolean | null;
     locationPrice?: number | null;
   };
@@ -78,10 +80,10 @@ export function PriceCard({
     location?.pincode ? `?pincode=${location.pincode}` : ""
   }`;
 
-  // Convert static ETA string to a concrete date label when possible
-  const deliveryLabel = listing.deliveryEta
-    ? etaToDateLabel(listing.deliveryEta)
-    : null;
+  // We now display the REAL ETA string straight from the pharmacy's own
+  // delivery endpoint (e.g. PharmEasy's "Delivery by Thu 14 May, before
+  // 11:00 pm" or 1mg's "Get in 30 minutes"). No more static heuristics.
+  const deliveryLabel = listing.deliveryEta ?? null;
 
   // Show location-specific price when it differs from the search-level price
   const displayPrice = listing.locationPrice ?? listing.sellingPrice ?? listing.mrp;
@@ -134,10 +136,14 @@ export function PriceCard({
             ) : listing.inStock && deliveryLabel ? (
               <span
                 className="flex items-center gap-1 text-emerald-300/90"
-                title="Estimated based on your pincode — confirm on the pharmacy site at checkout."
+                title="Live delivery estimate from the pharmacy"
               >
-                <Truck size={11} />
-                <span className="text-text-muted">Est.</span> {deliveryLabel}
+                <Truck size={11} /> {deliveryLabel}
+              </span>
+            ) : listing.inStock && listing.etaPending ? (
+              <span className="flex items-center gap-1 text-text-muted">
+                <Loader2 size={10} className="animate-spin" />
+                checking delivery…
               </span>
             ) : null}
           </div>

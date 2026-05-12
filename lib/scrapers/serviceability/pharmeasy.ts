@@ -44,11 +44,50 @@ interface PEPageProps {
   };
 }
 
+interface PEEddResponse {
+  edd?: {
+    deliverySpeed?: string;
+    text?: string; // e.g. "Delivery by "
+    time?: string; // e.g. "Thu 14 May, before 11:00 pm"
+    minEddTime?: string; // ISO
+    maxEddTime?: string; // ISO
+    quickDeliveryEnabled?: boolean;
+  };
+}
+
 /**
- * Check PharmEasy stock for a specific product URL.
- * Uses the Next.js data endpoint (/_next/data/{buildId}/...) which returns
- * the same SSR JSON the product page uses. This gives real-time stock status
- * but national pricing (PharmEasy does not expose per-pincode pricing headlessly).
+ * Fetch the real per-product delivery ETA from PharmEasy's OTC EDD endpoint.
+ * Format example: "Delivery by Thu 14 May, before 11:00 pm".
+ * The endpoint accepts no pincode header today — PharmEasy resolves the
+ * pincode from the calling IP / their internal default. We still expose
+ * a pincode arg in case they enable it later.
+ */
+async function fetchEdd(productId: string): Promise<string | null> {
+  try {
+    const data = await fetchJson<PEEddResponse>(
+      `https://pharmeasy.in/api/otc/fetchOtcEdd/${productId}`,
+      {
+        headers: {
+          referer: "https://pharmeasy.in/",
+          "user-agent": "Mozilla/5.0",
+        },
+        timeoutMs: 5000,
+      }
+    );
+    const time = data?.edd?.time?.trim();
+    const text = data?.edd?.text?.trim();
+    if (!time) return null;
+    return text ? `${text.replace(/\s+$/, "")} ${time}` : time;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check PharmEasy stock + real delivery ETA for a specific product URL.
+ *   - Stock/price comes from the SSR `_next/data` JSON.
+ *   - Real ETA comes from `/api/otc/fetchOtcEdd/{productId}` (e.g. "Thu 14 May").
+ * The two requests run in parallel.
  */
 export async function check(
   productUrl: string,
@@ -59,17 +98,49 @@ export async function check(
   if (!slugMatch?.[1]) return null;
   const slug = slugMatch[1];
 
-  const buildId = await getBuildId(slug);
-  if (!buildId) return null;
+  // PharmEasy's productId is the trailing -NNNNN segment of the slug.
+  const idMatch = slug.match(/-(\d+)$/);
+  const productId = idMatch?.[1] ?? null;
+
+  const buildIdPromise = getBuildId(slug);
+  const eddPromise = productId ? fetchEdd(productId) : Promise.resolve(null);
+
+  const [buildId, deliveryEta] = await Promise.all([
+    buildIdPromise,
+    eddPromise,
+  ]);
+
+  if (!buildId) {
+    // We can still return ETA-only result even without buildId.
+    if (deliveryEta) {
+      return {
+        inStock: true,
+        serviceable: true,
+        deliveryEta,
+        source: "live",
+      };
+    }
+    return null;
+  }
 
   const dataUrl = `https://pharmeasy.in/_next/data/${buildId}/online-medicine-order/${slug}.json`;
   const data = await fetchJson<PEPageProps>(dataUrl, {
     headers: { referer: `https://pharmeasy.in/online-medicine-order/${slug}` },
     timeoutMs: 5000,
-  });
+  }).catch(() => null);
 
   const pd = data?.pageProps?.productDetails;
-  if (!pd) return null;
+  if (!pd) {
+    if (deliveryEta) {
+      return {
+        inStock: true,
+        serviceable: true,
+        deliveryEta,
+        source: "live",
+      };
+    }
+    return null;
+  }
 
   const isAvailable =
     pd.isAvailable ??
@@ -84,7 +155,7 @@ export async function check(
   return {
     inStock,
     serviceable: true,
-    deliveryEta: null,
+    deliveryEta,
     price: price ?? undefined,
     mrp: mrp ?? undefined,
     source: "live",

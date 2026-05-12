@@ -25,6 +25,11 @@ interface Listing {
   productUrl?: string | null;
   scrapedAt: string;
   deliveryEta?: string | null;
+  /** True while we're still waiting for the live serviceability check.
+   *  Set to false the moment a `{type:"serviceability"}` chunk lands for
+   *  this listing id — at which point `deliveryEta` is the real value
+   *  (or null if the pharmacy doesn't expose one). */
+  etaPending?: boolean;
 }
 
 interface DrugDetail {
@@ -206,19 +211,49 @@ export function ResultsView({ medicineId, query }: Props) {
                 return next;
               });
               if (Array.isArray(msg.listings) && msg.listings.length > 0) {
-                aggregatedListings.push(...msg.listings);
+                // Tag each new listing as awaiting live serviceability so
+                // PriceCard can render "checking delivery…" until the
+                // matching {type:"serviceability"} chunk arrives.
+                const marked = msg.listings.map((l: Listing) => ({
+                  ...l,
+                  etaPending: true,
+                }));
+                aggregatedListings.push(...marked);
                 setMedicine((prev) =>
                   prev
                     ? {
                         ...prev,
                         listings: mergeListingsByPharmacy(
                           prev.listings,
-                          msg.listings
+                          marked
                         ),
                       }
                     : prev
                 );
               }
+            } else if (msg.type === "serviceability") {
+              // Merge live ETA / stock / price into the existing listing.
+              const updateFn = (l: Listing) =>
+                l.id === msg.listingId
+                  ? {
+                      ...l,
+                      etaPending: false,
+                      inStock:
+                        typeof msg.inStock === "boolean" ? msg.inStock : l.inStock,
+                      deliveryEta: msg.deliveryEta ?? null,
+                      sellingPrice:
+                        msg.sellingPrice ?? l.sellingPrice ?? null,
+                      mrp: msg.mrp ?? l.mrp ?? null,
+                    }
+                  : l;
+              for (let i = 0; i < aggregatedListings.length; i++) {
+                aggregatedListings[i] = updateFn(aggregatedListings[i]);
+              }
+              setMedicine((prev) =>
+                prev
+                  ? { ...prev, listings: prev.listings.map(updateFn) }
+                  : prev
+              );
             } else if (msg.type === "done") {
               setStreamDone(true);
               setPendingPharmacies(new Set());

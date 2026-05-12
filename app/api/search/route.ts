@@ -312,19 +312,19 @@ function buildStreamingResponse(
         pincode,
       });
 
-      // (2) Per-pharmacy streaming scrape. Each `onPharmacy` callback runs
-      // independently — including its own serviceability check — so the
-      // slowest pharmacy doesn't delay the others.
+      // (2) Per-pharmacy streaming. Each pharmacy emits its listing chunk
+      // as soon as its scraper resolves — WITHOUT waiting for the live
+      // serviceability/ETA call. The live check runs in the background and
+      // emits a separate {type:"serviceability"} chunk later that the
+      // client merges into the existing card. This means a card lands at
+      // ~1s and its real ETA fills in ~0.5–2s later.
       const finalListings: ScrapedListing[] = [];
       const svcByPharmacy = new Map<string, any>();
+      const svcPromises: Promise<void>[] = [];
 
       await scrapeAllStream(scrapeQuery, pincode, async (pharmacyName, raw) => {
         try {
-          // Filter cross-sells / bundles / wrong-strength variants.
           const filtered = filterRelevantListings(raw, ctx);
-
-          // Per-pharmacy dedup: at most one listing comes back here since
-          // every entry shares the same pharmacyName.
           const picked = pickBestPerPharmacy(filtered, ctx);
 
           if (picked.length === 0) {
@@ -332,51 +332,13 @@ function buildStreamingResponse(
             return;
           }
 
-          // Per-pharmacy serviceability — runs in parallel with every other
-          // pharmacy's serviceability because each `onPharmacy` is its own
-          // async chain. No barrier waiting for all scrapes to finish.
-          let enrichedPicked = picked;
-          if (pincode) {
-            const svcMap = await checkServiceability(picked, pincode).catch(
-              () => null
-            );
-            if (svcMap) {
-              enrichedPicked = picked.map((l) => {
-                const svc = svcMap.get(l.pharmacyName);
-                if (!svc) return l;
-                svcByPharmacy.set(l.pharmacyName, svc);
-                return {
-                  ...l,
-                  inStock: svc.inStock,
-                  sellingPrice: svc.price ?? l.sellingPrice,
-                  mrp: svc.mrp ?? l.mrp,
-                };
-              });
-            }
-          }
-
-          finalListings.push(...enrichedPicked);
-
-          // Shape each listing for the client (same fields as the JSON path).
-          const clientListings = enrichedPicked.map((l) => {
-            const svc = svcByPharmacy.get(l.pharmacyName);
-            const eta = svc
-              ? {
-                  eta:
-                    svc.deliveryEta ??
-                    estimateDelivery(l.pharmacyName, pincode).eta,
-                  serviceable: svc.serviceable,
-                }
-              : estimateDelivery(l.pharmacyName, pincode);
+          // Build the initial client-facing listing using ONLY the data the
+          // search-API gave us. No live serviceability merge yet — that
+          // arrives as a separate chunk.
+          const clientListings = picked.map((l) => {
             const hasPrice = l.sellingPrice != null || l.mrp != null;
-            const locationPrice =
-              svc?.price != null && svc.price !== l.sellingPrice
-                ? svc.price
-                : null;
             return {
-              // Synthetic id (DB row may not exist yet). The client only uses
-              // this for React keys.
-              id: `stream-${l.pharmacyName}-${Date.now()}`,
+              id: `stream-${l.pharmacyName}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
               medicineId: medRow.id,
               pharmacyName: l.pharmacyName,
               brandName: l.brandName ?? null,
@@ -385,21 +347,94 @@ function buildStreamingResponse(
               mrp: l.mrp ?? null,
               sellingPrice: l.sellingPrice ?? null,
               discountPercent: l.discountPercent ?? null,
-              inStock: l.inStock && eta.serviceable && hasPrice,
+              inStock: l.inStock && hasPrice,
               productUrl: l.productUrl ?? null,
-              deliveryEta: eta.eta,
-              serviceable: eta.serviceable,
-              locationPrice,
+              // null = live check pending; client renders "checking delivery…"
+              deliveryEta: null,
+              serviceable: true,
+              locationPrice: null,
               pincode: pincode ?? null,
               scrapedAt: new Date().toISOString(),
             };
           });
 
+          finalListings.push(...picked);
           writeMsg({
             type: "listing",
             pharmacy: pharmacyName,
             listings: clientListings,
           });
+
+          // Kick off the live serviceability check WITHOUT awaiting it —
+          // emit a follow-up chunk once it resolves. Collect the promise so
+          // we can await it before DB persist.
+          if (pincode) {
+            const listingIdsByPharmacy = clientListings.map((c) => c.id);
+            const svcPromise = checkServiceability(picked, pincode)
+              .then((svcMap) => {
+                if (!svcMap) return;
+                clientListings.forEach((cl, idx) => {
+                  const svc = svcMap.get(picked[idx].pharmacyName);
+                  if (!svc) return;
+                  svcByPharmacy.set(picked[idx].pharmacyName, svc);
+                  const origPrice = picked[idx].sellingPrice;
+                  writeMsg({
+                    type: "serviceability",
+                    pharmacy: pharmacyName,
+                    listingId: listingIdsByPharmacy[idx],
+                    inStock: svc.inStock,
+                    serviceable: svc.serviceable,
+                    // Null when the pharmacy doesn't expose a real ETA —
+                    // client shows nothing rather than fabricating a guess.
+                    deliveryEta: svc.deliveryEta,
+                    sellingPrice: svc.price ?? null,
+                    mrp: svc.mrp ?? null,
+                    locationPrice:
+                      svc.price != null && origPrice != null && svc.price !== origPrice
+                        ? svc.price
+                        : null,
+                  });
+                });
+              })
+              .catch((err: any) => {
+                console.warn(
+                  `[search-stream] ${pharmacyName} svc failed:`,
+                  err?.message ?? err
+                );
+                // Emit a serviceability chunk with no ETA so the client
+                // stops showing "checking delivery…" on this card.
+                clientListings.forEach((cl) => {
+                  writeMsg({
+                    type: "serviceability",
+                    pharmacy: pharmacyName,
+                    listingId: cl.id,
+                    inStock: cl.inStock,
+                    serviceable: true,
+                    deliveryEta: null,
+                    sellingPrice: null,
+                    mrp: null,
+                    locationPrice: null,
+                  });
+                });
+              });
+            svcPromises.push(svcPromise);
+          } else {
+            // No pincode → no live check is possible. Emit empty
+            // serviceability chunk so the client clears the pending state.
+            for (const cl of clientListings) {
+              writeMsg({
+                type: "serviceability",
+                pharmacy: pharmacyName,
+                listingId: cl.id,
+                inStock: cl.inStock,
+                serviceable: true,
+                deliveryEta: null,
+                sellingPrice: null,
+                mrp: null,
+                locationPrice: null,
+              });
+            }
+          }
         } catch (err: any) {
           console.error(
             `[search-stream] ${pharmacyName} failed:`,
@@ -409,11 +444,14 @@ function buildStreamingResponse(
         }
       });
 
-      // (3) Tell the client we're done — they clear skeletons NOW, before
-      // we incur the DB-write latency below.
+      // Wait for all the deferred serviceability calls to finish so:
+      //   (a) the "done" chunk doesn't fire while ETAs are still streaming
+      //   (b) DB persist below sees the live ETA values
+      await Promise.all(svcPromises).catch(() => {});
+
       writeMsg({ type: "done", count: finalListings.length });
 
-      // (4) DB writes happen after "done" but BEFORE controller.close() so
+      // (3) DB writes happen after "done" but BEFORE controller.close() so
       // Vercel keeps the function alive. User has already rendered the page.
       try {
         await persistFinalListings(
@@ -502,14 +540,14 @@ async function persistFinalListings(
       prisma.pharmacyListing.createMany({
         data: finalListings.map((s) => {
           const svc = svcByPharmacy.get(s.pharmacyName);
-          const eta = svc
-            ? {
-                eta:
-                  svc.deliveryEta ??
-                  estimateDelivery(s.pharmacyName, pincode).eta,
-                serviceable: svc.serviceable,
-              }
-            : estimateDelivery(s.pharmacyName, pincode);
+          // Store only the REAL ETA the pharmacy advertised. If the live
+          // check returned null, store null — never the static guess. The
+          // pincode-tier classification still drives `serviceable`.
+          const tierEta = estimateDelivery(s.pharmacyName, pincode);
+          const eta = {
+            eta: svc?.deliveryEta ?? null,
+            serviceable: (svc?.serviceable ?? true) && tierEta.serviceable,
+          };
           const hasPrice = s.sellingPrice != null || s.mrp != null;
           const locationPrice =
             svc?.price != null && svc.price !== s.sellingPrice
@@ -1105,9 +1143,22 @@ function enrich(med: any, pincode: string | null) {
       med.prescriptionRequired ?? detail?.prescriptionRequired ?? false,
     soldOnline: med.soldOnline ?? detail?.soldOnline ?? true,
   };
+  // Strip static-heuristic ETAs from cached rows. Old listings stored values
+  // like "Tomorrow" / "2-3 days" from `estimateDelivery`. Those aren't real
+  // pharmacy ETAs — better to show nothing than a fake one. Real ETAs from
+  // the live PharmEasy/1mg endpoints look like "Delivery by Thu 14 May…" or
+  // "Get in 30 minutes" and don't match these patterns.
+  const looksLikeStaticEta = (s: string | null | undefined): boolean => {
+    if (!s) return true;
+    const t = s.trim();
+    return (
+      /^(today|tomorrow|today\s*\/\s*tomorrow)$/i.test(t) ||
+      /^\d+(?:-\d+)?\s*days?$/i.test(t)
+    );
+  };
   let listings = (med.listings ?? []).map((l: any) => ({
     ...l,
-    deliveryEta: l.deliveryEta ?? estimateDelivery(l.pharmacyName, pincode).eta,
+    deliveryEta: looksLikeStaticEta(l.deliveryEta) ? null : l.deliveryEta,
   }));
 
   // Read-time filtering: cached listings may predate the dosage form /

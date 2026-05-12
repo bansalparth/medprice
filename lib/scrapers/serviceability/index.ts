@@ -3,13 +3,16 @@ import type { ScrapedListing, ServiceabilityResult } from "../types";
 import { check as checkPharmeasy } from "./pharmeasy";
 import { check as checkNetmeds } from "./netmeds";
 import { check as checkTruemeds } from "./truemeds";
+import { check as checkOnemg } from "./onemg";
 
 const SERVICEABILITY_TIMEOUT_MS = 4500;
 
-// Per-pharmacy check functions. Apollo is already pincode-aware (Playwright),
-// 1mg prices are already location-specific via city/x-pincode headers on the
-// search API, and MrMed is national-only — those three don't need separate
-// product-page checks.
+// Per-pharmacy check functions.
+//   - pharmeasy / 1mg now fetch real per-pincode delivery ETAs.
+//   - netmeds / truemeds still expose only stock + price (no real ETA found).
+//   - mrmed is national-only — no live check.
+//   - apollo runs only in the cron worker (browser) and doesn't respond on
+//     Vercel; we skip it here.
 const CHECKERS: Record<
   string,
   (productUrl: string, pincode: string) => Promise<ServiceabilityResult | null>
@@ -17,6 +20,7 @@ const CHECKERS: Record<
   pharmeasy: checkPharmeasy,
   netmeds: checkNetmeds,
   truemeds: checkTruemeds,
+  "1mg": checkOnemg,
 };
 
 function withTimeout<T>(
@@ -39,8 +43,15 @@ function withTimeout<T>(
 
 /**
  * Run per-product serviceability checks for all provided listings in parallel.
- * Returns a Map<pharmacyName, ServiceabilityResult> with live results where
- * available, falling back to static estimates from lib/delivery.ts.
+ * Returns a Map<pharmacyName, ServiceabilityResult>.
+ *
+ * IMPORTANT: when a live checker returns `null` (no real ETA available), this
+ * function preserves that null. We DO NOT fall back to the static estimate
+ * for `deliveryEta` — the caller (the stream / persist path) decides whether
+ * to show nothing or fall back to the static heuristic for DB storage only.
+ *
+ * Stock + serviceability fall back to the listing's own flags + the static
+ * tier classification when no live result comes back.
  */
 export async function checkAll(
   listings: ScrapedListing[],
@@ -52,12 +63,13 @@ export async function checkAll(
     const checker = CHECKERS[listing.pharmacyName];
 
     if (!checker || !listing.productUrl) {
-      // No live checker — use static estimate
+      // No live checker — leave deliveryEta null (no fake estimate) and use
+      // the static tier classification only for serviceability.
       const eta = estimateDelivery(listing.pharmacyName, pincode);
       results.set(listing.pharmacyName, {
         inStock: listing.inStock,
         serviceable: eta.serviceable,
-        deliveryEta: eta.eta,
+        deliveryEta: null,
         source: "static",
       });
       return;
@@ -74,17 +86,19 @@ export async function checkAll(
         const eta = estimateDelivery(listing.pharmacyName, pincode);
         results.set(listing.pharmacyName, {
           ...live,
-          // Always populate ETA (live checker returns null, use static)
-          deliveryEta: live.deliveryEta ?? eta.eta,
+          // Preserve null deliveryEta — caller decides what to do with it.
+          // Only intersect serviceability with the pincode-tier classification
+          // so an unserviceable rest-tier pin stays out of stock.
           serviceable: live.serviceable && eta.serviceable,
         });
       } else {
-        // Timeout or null — fall back to static
+        // Live check failed or timed out — keep null ETA; surface stock
+        // status from the search result.
         const eta = estimateDelivery(listing.pharmacyName, pincode);
         results.set(listing.pharmacyName, {
           inStock: listing.inStock,
           serviceable: eta.serviceable,
-          deliveryEta: eta.eta,
+          deliveryEta: null,
           source: "static",
         });
       }
@@ -97,7 +111,7 @@ export async function checkAll(
       results.set(listing.pharmacyName, {
         inStock: listing.inStock,
         serviceable: eta.serviceable,
-        deliveryEta: eta.eta,
+        deliveryEta: null,
         source: "static",
       });
     }
