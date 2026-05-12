@@ -40,6 +40,9 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // In-flight fetch controller — aborted on every new keystroke so the
+  // dropdown always reflects the latest input, never a slow stale response.
+  const abortRef = useRef<AbortController | null>(null);
   // Suppress the next debounced fetch — used after a programmatic value
   // change (autocomplete pick or initialValue sync) so we don't re-open
   // the dropdown immediately.
@@ -79,17 +82,31 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
       setSuggestions([]);
       return;
     }
+    // Cancel any in-flight request — the user has typed something newer.
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setLoading(true);
     try {
       const r = await apiFetch(
-        `/api/medicines/search?q=${encodeURIComponent(q.trim())}&limit=10`
+        `/api/medicines/search?q=${encodeURIComponent(q.trim())}&limit=10`,
+        { signal: ctrl.signal }
       );
       const d = await r.json();
+      // If this request was aborted between fetch resolving and now, bail.
+      if (ctrl.signal.aborted) return;
       setSuggestions(d.results ?? []);
       setShowSuggest(true);
       setHoverIdx(-1);
+    } catch (e: any) {
+      // AbortError is expected on rapid typing — swallow silently.
+      if (e?.name !== "AbortError") {
+        console.error("[autocomplete] fetch failed:", e);
+      }
     } finally {
-      setLoading(false);
+      // Only clear loading state for the *current* request — older aborts
+      // may resolve out of order.
+      if (abortRef.current === ctrl) setLoading(false);
     }
   };
 
@@ -105,7 +122,7 @@ export function SearchBar({ initialValue = "" }: { initialValue?: string }) {
       return;
     }
     setLoading(true);
-    debounceRef.current = setTimeout(() => fetchSuggestions(value), 80);
+    debounceRef.current = setTimeout(() => fetchSuggestions(value), 120);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };

@@ -506,21 +506,36 @@ async function persistFinalListings(
     ? medRow.saltComposition ?? newSalt
     : newSalt ?? medRow.saltComposition;
 
+  // hasInStock drives autocomplete visibility — true if at least one
+  // pharmacy listing is buyable (in stock + serviceable + has a price).
+  // Mirrors the per-listing `inStock` logic below.
+  const hasInStock = finalListings.some((s) => {
+    const svc = svcByPharmacy.get(s.pharmacyName);
+    const tierEta = estimateDelivery(s.pharmacyName, pincode);
+    const serviceable = (svc?.serviceable ?? true) && tierEta.serviceable;
+    const hasPrice = s.sellingPrice != null || s.mrp != null;
+    return s.inStock && serviceable && hasPrice;
+  });
+
   // Auto-promote / refresh medicine row
   const medUpdate: Promise<any> = medRow.isCatalog
-    ? saltComposition && !medRow.saltComposition
-      ? prisma.medicine
-          .update({
-            where: { id: medRow.id },
-            data: { saltComposition },
-          })
-          .then(() => null)
-          .catch(() => null)
-      : Promise.resolve(null)
+    ? prisma.medicine
+        .update({
+          where: { id: medRow.id },
+          data: {
+            hasInStock,
+            ...(saltComposition && !medRow.saltComposition
+              ? { saltComposition }
+              : {}),
+          },
+        })
+        .then(() => null)
+        .catch(() => null)
     : prisma.medicine
         .update({
           where: { id: medRow.id },
           data: {
+            hasInStock,
             saltComposition: saltComposition ?? undefined,
             brandName:
               medRow.brandName ??
@@ -950,6 +965,17 @@ async function persistScrapeResults(
     ? medRow.saltComposition ?? newSalt
     : newSalt ?? medRow.saltComposition;
 
+  // hasInStock drives autocomplete visibility — true if at least one
+  // pharmacy listing is buyable. Mirrors the per-listing logic below.
+  const hasInStock = relevantScraped.some((s) => {
+    const svc = svcResults?.get(s.pharmacyName);
+    const eta = svc
+      ? { serviceable: svc.serviceable }
+      : estimateDelivery(s.pharmacyName, pincode);
+    const hasPrice = s.sellingPrice != null || s.mrp != null;
+    return s.inStock && eta.serviceable && hasPrice;
+  });
+
   // Auto-promote: if this is a non-catalog entry and we got a clean scrape,
   // populate brandName from the first relevant listing for future searches.
   if (!medRow.isCatalog) {
@@ -958,15 +984,21 @@ async function persistScrapeResults(
     await prisma.medicine.update({
       where: { id: medRow.id },
       data: {
+        hasInStock,
         saltComposition: saltComposition ?? undefined,
         brandName: medRow.brandName ?? detectedBrand,
         packSize: medRow.packSize ?? firstListing?.packSize ?? undefined,
       },
     });
-  } else if (saltComposition && !medRow.saltComposition) {
+  } else {
     await prisma.medicine.update({
       where: { id: medRow.id },
-      data: { saltComposition },
+      data: {
+        hasInStock,
+        ...(saltComposition && !medRow.saltComposition
+          ? { saltComposition }
+          : {}),
+      },
     });
   }
 

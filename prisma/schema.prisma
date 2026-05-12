@@ -45,6 +45,14 @@ model Medicine {
   storage         String?
   // JSON array of substitute brand names from 1mg dataset (e.g. ["Penciclav 500 mg/125 mg Tablet"])
   substitutes     String?
+  // Denormalized "brand + name + salt" blob, lowercased. Postgres GENERATED
+  // ALWAYS column — never written by app code. Backs the autocomplete
+  // trigram + prefix indexes for sub-30ms lookups against a 200k-row table.
+  searchText      String?
+  // Precomputed availability: true if any PharmacyListing has inStock=true,
+  // or if the row is a fresh catalog entry that has never been scraped.
+  // Flipped by scrape persistence (lib/search/filter.ts).
+  hasInStock      Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -55,6 +63,10 @@ model Medicine {
   @@index([normalizedName])
   @@index([brandName])
   @@index([saltComposition])
+  @@index([hasInStock])
+  // searchText prefix + trigram indexes are created as raw SQL in the
+  // migration (text_pattern_ops btree + gin_trgm_ops GIN), neither of
+  // which Prisma's @@index syntax can express.
 }
 
 model PharmacyListing {
