@@ -4,7 +4,9 @@ import { scrapeAll } from "@/lib/scrapers";
 import { findJanAushadhiMatch } from "@/lib/jan-aushadhi/matcher";
 import { normalizeMedicineName } from "@/lib/utils";
 import { PHARMACIES } from "@/lib/scrapers/types";
+import type { ServiceabilityResult } from "@/lib/scrapers/types";
 import { estimateDelivery } from "@/lib/delivery";
+import { checkAll } from "@/lib/scrapers/serviceability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +25,7 @@ interface BasketItem {
       price: number;
       productUrl: string | null;
       inStock: boolean;
-      deliveryEta: string;
+      deliveryEta: string | null;
     } | null
   >;
   janAushadhiPrice: number | null;
@@ -31,25 +33,29 @@ interface BasketItem {
 
 async function processOne(
   query: string,
-  pincode: string | null
+  pincode: string | null,
+  refresh: boolean
 ): Promise<BasketItem> {
   const normalized = normalizeMedicineName(query);
 
   let med = await prisma.medicine.findFirst({
     where: { normalizedName: normalized },
     include: {
-      listings: {
-        where: {
-          scrapedAt: { gte: new Date(Date.now() - CACHE_TTL_MS) },
-          OR: [{ pincode: pincode ?? undefined }, { pincode: null }],
-        },
-        orderBy: { sellingPrice: "asc" },
-      },
+      listings: refresh
+        ? false
+        : {
+            where: {
+              scrapedAt: { gte: new Date(Date.now() - CACHE_TTL_MS) },
+              OR: [{ pincode: pincode ?? undefined }, { pincode: null }],
+            },
+            orderBy: { sellingPrice: "asc" },
+          },
       saltMappings: { include: { janAushadhiProduct: true } },
     },
   });
 
-  let listings = med?.listings ?? [];
+  type Listing = NonNullable<typeof med>["listings"][number];
+  let listings: Listing[] = refresh ? [] : ((med as any)?.listings ?? []);
 
   if (listings.length === 0) {
     const allScraped = await scrapeAll(query, pincode);
@@ -90,10 +96,16 @@ async function processOne(
         },
       });
 
+      const svcByPharmacy: Map<string, ServiceabilityResult> = pincode
+        ? await checkAll(scraped, pincode).catch(() => new Map())
+        : new Map();
+
       await prisma.pharmacyListing.deleteMany({ where: { medicineId: med.id } });
       await prisma.pharmacyListing.createMany({
         data: scraped.map((s) => {
-          const eta = estimateDelivery(s.pharmacyName, pincode);
+          const svc = svcByPharmacy.get(s.pharmacyName);
+          const tierEta = estimateDelivery(s.pharmacyName, pincode);
+          const serviceable = (svc?.serviceable ?? true) && tierEta.serviceable;
           const hasPrice = s.sellingPrice != null || s.mrp != null;
           return {
             medicineId: med!.id,
@@ -104,9 +116,9 @@ async function processOne(
             mrp: s.mrp,
             sellingPrice: s.sellingPrice,
             discountPercent: s.discountPercent,
-            inStock: s.inStock && eta.serviceable && hasPrice,
+            inStock: s.inStock && serviceable && hasPrice,
             productUrl: s.productUrl,
-            deliveryEta: eta.eta,
+            deliveryEta: svc?.deliveryEta ?? null,
             pincode: pincode ?? null,
           };
         }),
@@ -173,8 +185,7 @@ async function processOne(
           price: cheapest.sellingPrice ?? 0,
           productUrl: cheapest.productUrl ?? null,
           inStock: cheapest.inStock,
-          deliveryEta:
-            cheapest.deliveryEta ?? estimateDelivery(ph, pincode).eta,
+          deliveryEta: cheapest.deliveryEta ?? null,
         }
       : null;
   }
@@ -197,6 +208,7 @@ export async function POST(req: NextRequest) {
     typeof body.pincode === "string" && body.pincode.length >= 6
       ? body.pincode
       : null;
+  const refresh = body.refresh === true;
   if (!Array.isArray(queries) || queries.length === 0) {
     return NextResponse.json({ error: "queries array required" }, { status: 400 });
   }
@@ -205,7 +217,7 @@ export async function POST(req: NextRequest) {
   const items: BasketItem[] = [];
   for (const q of queries.slice(0, 10)) {
     if (typeof q !== "string" || !q.trim()) continue;
-    items.push(await processOne(q.trim(), pincode));
+    items.push(await processOne(q.trim(), pincode, refresh));
   }
 
   // Compute per-pharmacy total (only counting medicines that pharmacy has)

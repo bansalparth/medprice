@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractMedicinesFromImage } from "@/lib/ocr";
+import { correctMedicineNames } from "@/lib/ocr-correct";
 import { prisma } from "@/lib/prisma";
 import { readSid } from "@/lib/tracking";
 
@@ -55,9 +56,15 @@ export async function POST(req: NextRequest) {
         : "image/jpeg";
 
     const result = await extractMedicinesFromImage(buffer, mime as any);
-    const meds = Array.isArray(result?.medicines) ? result.medicines.length : 0;
+    // Fuzzy-match each extracted name against the Medicine catalog to fix
+    // common OCR typos (e.g. "Belledonna" → "Belladonna"). Falls through to
+    // the raw OCR name when no confident match is found.
+    const corrected = Array.isArray(result?.medicines)
+      ? await correctMedicineNames(result.medicines)
+      : [];
+    const meds = corrected.length;
     log({ succeeded: meds > 0, medsExtracted: meds });
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, medicines: corrected });
   } catch (err: any) {
     console.error("[ocr-route]", err);
     log({

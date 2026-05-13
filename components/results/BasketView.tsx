@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { Crown, Loader2, ShoppingCart, ExternalLink, Heart, Check, X, Truck } from "lucide-react";
+import { Crown, Loader2, ShoppingCart, ExternalLink, Heart, Check, X, Truck, RefreshCw } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "@/lib/location-context";
 import { apiFetch } from "@/lib/api-client";
@@ -17,12 +17,14 @@ const PHARMACY_LABELS: Record<string, string> = {
   mrmed: "MrMed",
 };
 
+const DEFAULT_VISIBLE_PHARMACIES = ["netmeds", "pharmeasy", "truemeds", "1mg"];
+
 interface PharmacyEntry {
   productName: string;
   price: number;
   productUrl: string | null;
   inStock: boolean;
-  deliveryEta: string;
+  deliveryEta: string | null;
 }
 
 interface BasketItem {
@@ -42,17 +44,23 @@ interface BasketResponse {
 export function BasketView({ queries }: { queries: string[] }) {
   const [data, setData] = useState<BasketResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { location } = useLocation();
 
-  useEffect(() => {
+  const runFetch = (refresh: boolean) => {
     let cancelled = false;
-    setLoading(true);
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
     setError(null);
     apiFetch("/api/basket", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ queries, pincode: location?.pincode ?? null }),
+      body: JSON.stringify({
+        queries,
+        pincode: location?.pincode ?? null,
+        refresh,
+      }),
     })
       .then(async (r) => {
         if (!r.ok) throw new Error(`Basket failed: ${r.status}`);
@@ -62,17 +70,24 @@ export function BasketView({ queries }: { queries: string[] }) {
         if (!cancelled) {
           setData(d);
           setLoading(false);
+          setRefreshing(false);
         }
       })
       .catch((e) => {
         if (!cancelled) {
           setError(e.message);
           setLoading(false);
+          setRefreshing(false);
         }
       });
     return () => {
       cancelled = true;
     };
+  };
+
+  useEffect(() => {
+    return runFetch(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queries.join(","), location?.pincode]);
 
   if (loading) {
@@ -123,7 +138,12 @@ export function BasketView({ queries }: { queries: string[] }) {
     });
 
   const cheapestPharmacy = pharmacyRanking[0];
-  const allPharmaciesInOrder = pharmacyRanking.map(([n]) => n);
+  // When no pharmacy carries any of the medicines, still render the main 4
+  // columns (all X's) so the user can see what was checked.
+  const allPharmaciesInOrder =
+    pharmacyRanking.length > 0
+      ? pharmacyRanking.map(([n]) => n)
+      : DEFAULT_VISIBLE_PHARMACIES;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -132,9 +152,23 @@ export function BasketView({ queries }: { queries: string[] }) {
         animate={{ opacity: 1, y: 0 }}
         className="mb-6"
       >
-        <h1 className="font-display font-bold text-3xl md:text-4xl tracking-tight flex items-center gap-3">
-          <ShoppingCart className="text-purple-400" /> Your Basket
-        </h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="font-display font-bold text-3xl md:text-4xl tracking-tight flex items-center gap-3">
+            <ShoppingCart className="text-purple-400" /> Your Basket
+          </h1>
+          <button
+            onClick={() => runFetch(true)}
+            disabled={refreshing}
+            title="Force fresh scrape (bypass cache)"
+            className="shrink-0 mt-1 flex items-center gap-1.5 text-xs text-text-secondary hover:text-white px-2.5 py-1.5 rounded-full border border-white/10 hover:border-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <RefreshCw
+              size={12}
+              className={refreshing ? "animate-spin" : ""}
+            />
+            {refreshing ? "Refreshing" : "Refresh"}
+          </button>
+        </div>
         <p className="text-text-secondary mt-1">
           {data.items.length} medicines · ranked by coverage, then cost
         </p>
@@ -268,8 +302,12 @@ export function BasketView({ queries }: { queries: string[] }) {
                                 ? "text-purple-300 font-semibold"
                                 : "text-text-primary"
                             } hover:text-purple-400`}
-                            title={`${e.productName} — ${
-                              e.inStock ? `delivers ${e.deliveryEta}` : "out of stock"
+                            title={`${e.productName}${
+                              e.inStock
+                                ? e.deliveryEta
+                                  ? ` — delivers ${e.deliveryEta}`
+                                  : ""
+                                : " — out of stock"
                             }`}
                           >
                             <span className="inline-flex items-center gap-1">
@@ -277,9 +315,11 @@ export function BasketView({ queries }: { queries: string[] }) {
                               <ExternalLink size={10} />
                             </span>
                             {e.inStock ? (
-                              <span className="text-[10px] text-emerald-300/80 font-normal flex items-center gap-1">
-                                <Truck size={9} /> {e.deliveryEta}
-                              </span>
+                              e.deliveryEta ? (
+                                <span className="text-[10px] text-emerald-300/80 font-normal flex items-center gap-1">
+                                  <Truck size={9} /> {e.deliveryEta}
+                                </span>
+                              ) : null
                             ) : (
                               <span className="text-[10px] text-red-400 font-normal">
                                 OOS
