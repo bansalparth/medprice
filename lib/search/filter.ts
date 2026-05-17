@@ -323,17 +323,47 @@ export function filterRelevantListings(
       }
     }
 
-    // 7. Pack-count match. Reject ONLY when both the catalog target and the
-    // listing have a confidently parseable pack count and they differ. If
-    // either side is unknown, keep the listing (better to show with a count
-    // chip than hide it).
-    if (ctx.targetPackCount != null) {
-      const prodPack = extractPackCount(s.productName, s.packSize);
-      if (prodPack != null && prodPack !== ctx.targetPackCount) return false;
-    }
+    // NOTE: pack-size filtering deliberately lives in filterByPackCount(),
+    // not here, so callers can collect the union of available pack sizes
+    // across catalog-matched listings BEFORE narrowing them by pack — the
+    // dropdown needs to know what sizes exist for THIS medicine.
 
     return true;
   });
+}
+
+/**
+ * Apply the pack-size filter to listings that have already been catalog-
+ * matched by filterRelevantListings(). Keeps listings whose extractable
+ * pack count matches the target; keeps listings whose count is unknown
+ * (better to show with a count chip than hide). If target is null, no-op.
+ */
+export function filterByPackCount(
+  listings: ScrapedListing[],
+  ctx: FilterContext
+): ScrapedListing[] {
+  if (ctx.targetPackCount == null) return listings;
+  return listings.filter((s) => {
+    const prodPack = extractPackCount(s.productName, s.packSize);
+    if (prodPack != null && prodPack !== ctx.targetPackCount) return false;
+    return true;
+  });
+}
+
+/**
+ * Collect the set of distinct, parseable pack counts present in the given
+ * catalog-matched listings. Used to populate the pack-size dropdown with
+ * options that actually exist for this medicine.
+ */
+export function collectAvailablePackSizes(
+  listings: Array<{ productName: string; packSize?: string | null }>
+): number[] {
+  const set = new Set<number>();
+  for (const l of listings) {
+    const n = extractPackCount(l.productName, l.packSize ?? null);
+    if (n != null) set.add(n);
+  }
+  return Array.from(set).sort((a, b) => a - b);
 }
 
 function scoreListing(

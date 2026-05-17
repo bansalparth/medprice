@@ -11,6 +11,8 @@ import { readSid } from "@/lib/tracking";
 import {
   buildFilterContext,
   filterRelevantListings,
+  filterByPackCount,
+  collectAvailablePackSizes,
   pickBestPerPharmacy,
 } from "@/lib/search/filter";
 
@@ -472,10 +474,22 @@ function buildStreamingResponse(
       const finalListings: ScrapedListing[] = [];
       const svcByPharmacy = new Map<string, any>();
       const svcPromises: Promise<void>[] = [];
+      // Union of pack counts across every catalog-matched listing from every
+      // pharmacy (BEFORE the user's pack-size filter narrows it). Emitted
+      // after "done" so the client can populate the pack-size selector with
+      // only the sizes that actually exist for this medicine.
+      const availablePackSet = new Set<number>();
 
       await scrapeAllStream(scrapeQuery, pincode, async (pharmacyName, raw) => {
         try {
-          const filtered = filterRelevantListings(raw, ctx);
+          const catalogMatched = filterRelevantListings(raw, ctx);
+          // Track every pack size that survived the catalog match — this is
+          // the universe the dropdown should expose, regardless of the
+          // currently-selected size.
+          for (const n of collectAvailablePackSizes(catalogMatched)) {
+            availablePackSet.add(n);
+          }
+          const filtered = filterByPackCount(catalogMatched, ctx);
           const picked = pickBestPerPharmacy(filtered, ctx);
 
           if (picked.length === 0) {
@@ -600,7 +614,11 @@ function buildStreamingResponse(
       //   (b) DB persist below sees the live ETA values
       await Promise.all(svcPromises).catch(() => {});
 
-      writeMsg({ type: "done", count: finalListings.length });
+      writeMsg({
+        type: "done",
+        count: finalListings.length,
+        availablePackSizes: Array.from(availablePackSet).sort((a, b) => a - b),
+      });
 
       // (3) DB writes happen after "done" but BEFORE controller.close() so
       // Vercel keeps the function alive. User has already rendered the page.
@@ -1430,10 +1448,21 @@ function enrich(med: any, pincode: string | null, requestedPack: number | null =
   // Read-time filtering: cached listings may predate the dosage form /
   // dedup / relevance filters added in persistScrapeResults. Apply the
   // same checks here so stale DB rows never reach the client.
-  listings = postFilterListings(listings, med, requestedPack);
+  const { listings: filtered, availablePackSizes } = postFilterListings(
+    listings,
+    med,
+    requestedPack
+  );
+  listings = filtered;
 
   const saltMappings = med.saltMappings ?? [];
-  return { ...med, listings, saltMappings, drugDetail };
+  return {
+    ...med,
+    listings,
+    saltMappings,
+    drugDetail,
+    availablePackSizes,
+  };
 }
 
 /**
@@ -1445,8 +1474,10 @@ function postFilterListings(
   listings: any[],
   med: any,
   requestedPack: number | null = null
-): any[] {
-  if (!listings.length || !med) return listings;
+): { listings: any[]; availablePackSizes: number[] } {
+  if (!listings.length || !med) {
+    return { listings, availablePackSizes: [] };
+  }
 
   // Mirror buildFilterContext's target pack-count derivation: prefer the
   // user-requested size, else the catalog's canonical pack count.
@@ -1560,14 +1591,34 @@ function postFilterListings(
       }
     }
 
-    // Pack-count match (cached listings carry packSize + productName too).
-    if (targetPackCountForFilter != null) {
-      const prodPack = extractPackCount(l.productName ?? "", l.packSize ?? "");
-      if (prodPack != null && prodPack !== targetPackCountForFilter) return false;
-    }
+    // NOTE: pack-size filter applied as a SECOND pass below — we need the
+    // catalog-matched set first to compute the dropdown's available sizes.
 
     return true;
   });
+
+  // Collect every pack count surviving the catalog match — this is the
+  // universe the pack-size dropdown should expose, regardless of which
+  // size the user currently has selected.
+  const availablePackSizes = Array.from(
+    new Set(
+      filtered
+        .map((l: any) => extractPackCount(l.productName ?? "", l.packSize ?? ""))
+        .filter((n: number | null): n is number => n != null)
+    )
+  ).sort((a, b) => a - b);
+
+  // Second pass: pack-count filter. Cached listings carry packSize +
+  // productName too. Reject only when both sides have a confidently
+  // parseable count and they differ.
+  if (targetPackCountForFilter != null) {
+    filtered = filtered.filter((l: any) => {
+      const prodPack = extractPackCount(l.productName ?? "", l.packSize ?? "");
+      if (prodPack != null && prodPack !== targetPackCountForFilter)
+        return false;
+      return true;
+    });
+  }
 
   // Per-pharmacy dedup: keep best match per pharmacy
   const sourceLower = sourceText.toLowerCase();
@@ -1608,5 +1659,5 @@ function postFilterListings(
     return ap - bp;
   });
 
-  return filtered;
+  return { listings: filtered, availablePackSizes };
 }

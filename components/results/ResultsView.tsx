@@ -11,7 +11,6 @@ import { DrugInfo } from "./DrugInfo";
 import { apiFetch } from "@/lib/api-client";
 import { Alternatives } from "./Alternatives";
 import { formatCurrency } from "@/lib/utils";
-import { extractPackCount } from "@/lib/pack-size";
 import { useLocation } from "@/lib/location-context";
 
 interface Listing {
@@ -69,6 +68,9 @@ interface MedicineData {
   listings: Listing[];
   saltMappings: SaltMapping[];
   drugDetail?: DrugDetail | null;
+  /** Pack counts the server saw across catalog-matched listings for this
+   *  medicine — used to populate the pack-size selector. */
+  availablePackSizes?: number[];
 }
 
 interface SearchResponse {
@@ -116,8 +118,12 @@ export function ResultsView({ medicineId, query }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [storePanelOpen, setStorePanelOpen] = useState(false);
   const [showOos, setShowOos] = useState(false);
-  // null until the medicine row loads and we derive the canonical pack count.
+  // null until the user picks one (or we derive a single canonical size).
   const [packSize, setPackSize] = useState<number | null>(null);
+  // Sizes the server saw across catalog-matched listings — drives the
+  // dropdown. Empty until the stream's "done" chunk arrives (or the
+  // cached-response JSON parses).
+  const [availablePackSizes, setAvailablePackSizes] = useState<number[]>([]);
   // Pharmacies that responded with zero matching listings — used so we can
   // render an explicit "no matching pack" empty card instead of silently
   // hiding the pharmacy.
@@ -164,6 +170,7 @@ export function ResultsView({ medicineId, query }: Props) {
       setStreamDone(false);
       setPendingPharmacies(new Set(EXPECTED_PHARMACIES));
       setEmptyResponded(new Set());
+      setAvailablePackSizes([]);
       setMessage(null);
       setError(null);
       setSearchLogId(null);
@@ -186,6 +193,12 @@ export function ResultsView({ medicineId, query }: Props) {
           setSearchLogId(d.searchLogId ?? null);
           setPendingPharmacies(new Set());
           setStreamDone(true);
+          if (
+            d.medicine &&
+            Array.isArray(d.medicine.availablePackSizes)
+          ) {
+            setAvailablePackSizes(d.medicine.availablePackSizes);
+          }
           CLIENT_CACHE.set(cacheKey, { data: d, ts: Date.now() });
           return;
         }
@@ -285,6 +298,9 @@ export function ResultsView({ medicineId, query }: Props) {
             } else if (msg.type === "done") {
               setStreamDone(true);
               setPendingPharmacies(new Set());
+              if (Array.isArray(msg.availablePackSizes)) {
+                setAvailablePackSizes(msg.availablePackSizes);
+              }
             }
           }
         }
@@ -317,20 +333,9 @@ export function ResultsView({ medicineId, query }: Props) {
     };
   }, [runSearch, locationReady]);
 
-  // Derive a canonical pack count from the loaded medicine row so the
-  // segmented selector knows which size to highlight by default. Only set
-  // once — user clicks override this thereafter.
-  useEffect(() => {
-    if (medicine && packSize == null) {
-      // extractPackCount(productName, packSize) — order matters.
-      const canonical = extractPackCount(
-        medicine.name ?? medicine.brandName ?? null,
-        medicine.packSize
-      );
-      if (canonical != null) setPackSize(canonical);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [medicine?.id]);
+  // Default selection is "All" (packSize=null). The selector options are
+  // driven entirely by availablePackSizes the server emitted, so users
+  // never see a hard-coded size that doesn't exist for this medicine.
 
   const initialLoading = !medicine && !error;
   const allListings = medicine?.listings ?? [];
@@ -461,36 +466,40 @@ export function ResultsView({ medicineId, query }: Props) {
                 {medicine.saltComposition}
               </p>
             )}
-            <div className="flex items-center gap-2 mt-3">
-              <span className="text-[11px] uppercase tracking-wider text-text-muted">
-                Pack size
-              </span>
-              <div className="inline-flex rounded-full bg-overlay-5 border border-overlay-10 p-0.5">
-                {([null, 10, 15, 30] as const).map((n) => {
-                  const active = packSize === n;
-                  const label = n == null ? "All" : String(n);
-                  return (
-                    <button
-                      key={label}
-                      onClick={() => {
-                        if (!active) {
-                          setPackSize(n);
-                          runSearch({ packSize: n, refresh: true });
-                        }
-                      }}
-                      disabled={pendingPharmacies.size > 0}
-                      className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-                        active
-                          ? "bg-purple-500/30 text-white"
-                          : "text-text-secondary hover:text-white"
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+            {availablePackSizes.length >= 2 && (
+              <div className="flex items-center gap-2 mt-3 flex-wrap">
+                <span className="text-[11px] uppercase tracking-wider text-text-muted">
+                  Pack size
+                </span>
+                <div className="inline-flex rounded-full bg-overlay-5 border border-overlay-10 p-0.5">
+                  {([null, ...availablePackSizes] as (number | null)[]).map(
+                    (n) => {
+                      const active = packSize === n;
+                      const label = n == null ? "All" : String(n);
+                      return (
+                        <button
+                          key={label}
+                          onClick={() => {
+                            if (!active) {
+                              setPackSize(n);
+                              runSearch({ packSize: n, refresh: true });
+                            }
+                          }}
+                          disabled={pendingPharmacies.size > 0}
+                          className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                            active
+                              ? "bg-purple-500/30 text-white"
+                              : "text-text-secondary hover:text-white"
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    }
+                  )}
+                </div>
               </div>
-            </div>
+            )}
             {stale && (
               <p className="text-xs text-yellow-400 mt-2">
                 Showing cached prices — live scrape returned no fresh results.
@@ -576,7 +585,7 @@ export function ResultsView({ medicineId, query }: Props) {
                       {p}
                     </span>
                     <span className="text-sm text-text-muted">
-                      No {packSize}-tablet pack found at this pharmacy
+                      No pack of {packSize} found at this pharmacy
                     </span>
                   </div>
                 ))}
