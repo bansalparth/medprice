@@ -78,7 +78,7 @@ export async function scrape(
       const discountPercent = discountStr
         ? parseInt(String(discountStr).replace(/[^0-9]/g, "")) || undefined
         : mrp && sellingPrice && mrp > sellingPrice
-        ? Math.round(((mrp - sellingPrice) / mrp) * 100)
+        ? (Math.round(((mrp - sellingPrice) / mrp) * 100) || undefined)
         : undefined;
 
       const path = r.url ?? "";

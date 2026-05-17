@@ -11,6 +11,7 @@ import { DrugInfo } from "./DrugInfo";
 import { apiFetch } from "@/lib/api-client";
 import { Alternatives } from "./Alternatives";
 import { formatCurrency } from "@/lib/utils";
+import { extractPackCount } from "@/lib/pack-size";
 import { useLocation } from "@/lib/location-context";
 
 interface Listing {
@@ -115,16 +116,26 @@ export function ResultsView({ medicineId, query }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [storePanelOpen, setStorePanelOpen] = useState(false);
   const [showOos, setShowOos] = useState(false);
+  // null until the medicine row loads and we derive the canonical pack count.
+  const [packSize, setPackSize] = useState<number | null>(null);
+  // Pharmacies that responded with zero matching listings — used so we can
+  // render an explicit "no matching pack" empty card instead of silently
+  // hiding the pharmacy.
+  const [emptyResponded, setEmptyResponded] = useState<Set<string>>(new Set());
   const { location, ready: locationReady } = useLocation();
   const cancelledRef = useRef(false);
 
   const runSearch = useCallback(
-    async (opts: { refresh?: boolean } = {}) => {
+    async (opts: { refresh?: boolean; packSize?: number | null } = {}) => {
       const params = new URLSearchParams();
       if (medicineId) params.set("medicineId", medicineId);
       else if (query) params.set("q", query);
       if (location?.pincode) params.set("pincode", location.pincode);
       if (opts.refresh) params.set("refresh", "1");
+      // Pack size: opts.packSize overrides state; null means clear.
+      const effectivePack =
+        opts.packSize !== undefined ? opts.packSize : packSize;
+      if (effectivePack != null) params.set("packSize", String(effectivePack));
 
       const cacheKey = params.toString();
 
@@ -152,6 +163,7 @@ export function ResultsView({ medicineId, query }: Props) {
       }
       setStreamDone(false);
       setPendingPharmacies(new Set(EXPECTED_PHARMACIES));
+      setEmptyResponded(new Set());
       setMessage(null);
       setError(null);
       setSearchLogId(null);
@@ -215,6 +227,17 @@ export function ResultsView({ medicineId, query }: Props) {
                 next.delete(msg.pharmacy);
                 return next;
               });
+              if (
+                Array.isArray(msg.listings) &&
+                msg.listings.length === 0
+              ) {
+                setEmptyResponded((prev) => {
+                  if (prev.has(msg.pharmacy)) return prev;
+                  const next = new Set(prev);
+                  next.add(msg.pharmacy);
+                  return next;
+                });
+              }
               if (Array.isArray(msg.listings) && msg.listings.length > 0) {
                 // Tag each new listing as awaiting live serviceability so
                 // PriceCard can render "checking delivery…" until the
@@ -282,7 +305,7 @@ export function ResultsView({ medicineId, query }: Props) {
         }
       }
     },
-    [medicineId, query, location?.pincode]
+    [medicineId, query, location?.pincode, packSize]
   );
 
   useEffect(() => {
@@ -293,6 +316,20 @@ export function ResultsView({ medicineId, query }: Props) {
       cancelledRef.current = true;
     };
   }, [runSearch, locationReady]);
+
+  // Derive a canonical pack count from the loaded medicine row so the
+  // segmented selector knows which size to highlight by default. Only set
+  // once — user clicks override this thereafter.
+  useEffect(() => {
+    if (medicine && packSize == null) {
+      const canonical = extractPackCount(
+        medicine.packSize,
+        medicine.brandName ?? medicine.name
+      );
+      if (canonical != null) setPackSize(canonical);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [medicine?.id]);
 
   const initialLoading = !medicine && !error;
   const allListings = medicine?.listings ?? [];
@@ -423,6 +460,41 @@ export function ResultsView({ medicineId, query }: Props) {
                 {medicine.saltComposition}
               </p>
             )}
+            {packSize != null && (
+              <div className="flex items-center gap-2 mt-3">
+                <span className="text-[11px] uppercase tracking-wider text-text-muted">
+                  Pack size
+                </span>
+                <div className="inline-flex rounded-full bg-overlay-5 border border-overlay-10 p-0.5">
+                  {[10, 15, 30].map((n) => {
+                    const active = packSize === n;
+                    return (
+                      <button
+                        key={n}
+                        onClick={() => {
+                          if (!active) {
+                            setPackSize(n);
+                            // runSearch is keyed on packSize state — the
+                            // effect re-fires automatically. Force-refresh
+                            // when changing pack so any cached wrong-pack
+                            // rows are bypassed.
+                            runSearch({ packSize: n, refresh: true });
+                          }
+                        }}
+                        disabled={pendingPharmacies.size > 0}
+                        className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                          active
+                            ? "bg-purple-500/30 text-white"
+                            : "text-text-secondary hover:text-white"
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        {n}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {stale && (
               <p className="text-xs text-yellow-400 mt-2">
                 Showing cached prices — live scrape returned no fresh results.
@@ -492,6 +564,26 @@ export function ResultsView({ medicineId, query }: Props) {
                 index={inStockListings.length + i}
               />
             ))}
+
+            {/* "Tried this pharmacy but found no matching pack" empty cards.
+                Only show when a pack size is selected — otherwise an empty
+                result is a regular zero-match outcome handled below. */}
+            {packSize != null &&
+              Array.from(emptyResponded)
+                .filter((p) => !respondedPharmacies.has(p))
+                .map((p, i) => (
+                  <div
+                    key={`empty-${p}`}
+                    className="glass-card p-5 flex items-center gap-4 opacity-60"
+                  >
+                    <span className="pharmacy-badge border bg-overlay-5 text-text-secondary border-overlay-10">
+                      {p}
+                    </span>
+                    <span className="text-sm text-text-muted">
+                      No {packSize}-tablet pack found at this pharmacy
+                    </span>
+                  </div>
+                ))}
 
             {/* "No results" block — only show after the stream is done and
                 we got nothing relevant. */}

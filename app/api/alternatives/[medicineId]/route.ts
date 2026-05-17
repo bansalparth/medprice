@@ -78,7 +78,7 @@ export async function GET(
     ingredients: parseIngredients(me.ingredients),
     saltComposition: me.saltComposition,
     pharmacy,
-    alternatives: alternatives.slice(0, 6),
+    alternatives: dedupById(alternatives).slice(0, 6),
     disclaimer: STANDARD_DISCLAIMER,
   });
 }
@@ -254,7 +254,18 @@ async function trySubstituteMatch(me: {
     }
   }
 
-  return results;
+  // Dedup by id — the substitutes JSON can contain the same brand twice, or
+  // two entries that normalize to the same DB row.
+  return dedupById(results);
+}
+
+function dedupById<T extends { id: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (seen.has(r.id)) return false;
+    seen.add(r.id);
+    return true;
+  });
 }
 
 // ── Live pricing ───────────────────────────────────────────────────────────

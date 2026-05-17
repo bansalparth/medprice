@@ -12,6 +12,7 @@
  */
 
 import type { ScrapedListing } from "@/lib/scrapers/types";
+import { extractPackCount } from "@/lib/pack-size";
 
 const NOISE_TOKENS = new Set([
   "tablet", "tablets", "capsule", "capsules", "tab", "tabs", "cap", "caps",
@@ -70,14 +71,22 @@ export interface FilterContext {
   primaryUnit: string | null;
   catalogSuffixes: Set<string>;
   catalogDosageGroup: string | null;
+  /** Target pack count: either the user-selected size from ?packSize=, or
+   *  the catalog's canonical count, or null when unknown. Used to reject
+   *  listings whose extractable pack count is confidently different. */
+  targetPackCount: number | null;
 }
 
-export function buildFilterContext(medRow: {
-  brandName?: string | null;
-  name?: string | null;
-  dosageForm?: string | null;
-  ingredients?: string | null;
-}): FilterContext {
+export function buildFilterContext(
+  medRow: {
+    brandName?: string | null;
+    name?: string | null;
+    dosageForm?: string | null;
+    ingredients?: string | null;
+    packSize?: string | null;
+  },
+  requestedPack: number | null = null
+): FilterContext {
   const sourceText: string = medRow.brandName ?? medRow.name ?? "";
 
   const brandTokens = sourceText
@@ -108,10 +117,28 @@ export function buildFilterContext(medRow: {
     }
   }
 
+  // Fallback: if ingredients didn't supply a strength, try to extract one
+  // from the medicine display name itself ("Telma 40 Tablet" → 40). Only
+  // accept when exactly one strength is parseable, otherwise we'd risk a
+  // false positive (e.g. "Crocin 500 vs 650" combo names).
+  if (primaryStrength == null) {
+    const fromName = extractStrengths(sourceText);
+    if (fromName.length === 1) {
+      primaryStrength = fromName[0];
+    }
+  }
+
   const catalogSuffixes = extractSuffixes(sourceText);
   const catalogDosageGroup: string | null = medRow.dosageForm
     ? detectDosageGroup(medRow.dosageForm) ?? detectDosageGroup(sourceText)
     : detectDosageGroup(sourceText);
+
+  // Pack-count: prefer the user's explicit pick over the catalog's canonical
+  // pack size. Either can be null (e.g. liquids), in which case the pack
+  // filter is a no-op below.
+  const catalogPackCount =
+    extractPackCount(medRow.packSize ?? null, sourceText) ?? null;
+  const targetPackCount: number | null = requestedPack ?? catalogPackCount;
 
   return {
     sourceText,
@@ -122,6 +149,7 @@ export function buildFilterContext(medRow: {
     primaryUnit,
     catalogSuffixes,
     catalogDosageGroup,
+    targetPackCount,
   };
 }
 
@@ -254,6 +282,34 @@ export function filterRelevantListings(
           !/^\d+(\.\d+)?$/.test(w)
       );
       if (extraWords.length > 4) return false;
+
+      // 6b. Salt-variant suffix rejection. For 1-token catalog brands, the
+      // word immediately after the matched brand often distinguishes a
+      // different drug — "Telma D" (telmisartan + diuretic) vs plain Telma.
+      // If that word is alpha-only, not a known formulation suffix
+      // (SR/MD/ER/etc.), and not a noise word, reject. Numbers are fine
+      // (they're strengths or pack counts, handled elsewhere).
+      if (ctx.brandTokens.length === 1 && firstBrandIdx >= 0) {
+        const nextWord = prodWords[firstBrandIdx + 1];
+        if (
+          nextWord &&
+          /^[a-z]+$/.test(nextWord) &&
+          !NOISE_TOKENS.has(nextWord) &&
+          !FORMULATION_SUFFIXES.includes(nextWord) &&
+          !ctx.brandSet.has(nextWord)
+        ) {
+          return false;
+        }
+      }
+    }
+
+    // 7. Pack-count match. Reject ONLY when both the catalog target and the
+    // listing have a confidently parseable pack count and they differ. If
+    // either side is unknown, keep the listing (better to show with a count
+    // chip than hide it).
+    if (ctx.targetPackCount != null) {
+      const prodPack = extractPackCount(s.productName, s.packSize);
+      if (prodPack != null && prodPack !== ctx.targetPackCount) return false;
     }
 
     return true;

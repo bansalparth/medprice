@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { scrapeAll, scrapeAllStream, type ScrapedListing } from "@/lib/scrapers";
 import { findJanAushadhiMatch } from "@/lib/jan-aushadhi/matcher";
 import { normalizeMedicineName } from "@/lib/utils";
+import { extractPackCount } from "@/lib/pack-size";
 import { estimateDelivery } from "@/lib/delivery";
 import { lookupDrugDetail } from "@/lib/drug-details";
 import { checkAll as checkServiceability } from "@/lib/scrapers/serviceability";
@@ -142,6 +143,10 @@ export async function GET(req: NextRequest) {
   const pincode = req.nextUrl.searchParams.get("pincode") ?? null;
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
   const autocompletePicked = req.nextUrl.searchParams.get("picked") === "1";
+  const requestedPackParam = req.nextUrl.searchParams.get("packSize");
+  const requestedPack = requestedPackParam
+    ? parseInt(requestedPackParam, 10) || null
+    : null;
   const sid = readSid(req);
   refreshSession(sid, pincode);
 
@@ -236,7 +241,7 @@ export async function GET(req: NextRequest) {
     const ageMs = Date.now() - newest;
 
     if (ageMs < FRESH_TTL_MS) {
-      const enriched = enrich(cachedMed, pincode);
+      const enriched = enrich(cachedMed, pincode, requestedPack);
       finalizeSearchLog(
         searchLogId,
         enriched.listings,
@@ -263,14 +268,14 @@ export async function GET(req: NextRequest) {
       setTimeout(() => inflight.delete(scrapeKey), INFLIGHT_TTL_MS);
       void p
         .then((scraped) =>
-          persistScrapeResults(medRow!, scraped, pincode)
+          persistScrapeResults(medRow!, scraped, pincode, requestedPack)
         )
         .catch((e) =>
           console.error("[search] background refresh failed:", e?.message)
         );
     }
 
-    const enrichedStale = enrich(cachedMed, pincode);
+    const enrichedStale = enrich(cachedMed, pincode, requestedPack);
     finalizeSearchLog(
       searchLogId,
       enrichedStale.listings,
@@ -300,7 +305,7 @@ export async function GET(req: NextRequest) {
   );
 
   if (acceptsStream) {
-    return buildStreamingResponse(medRow, scrapeQuery, pincode, searchLogId, t0);
+    return buildStreamingResponse(medRow, scrapeQuery, pincode, searchLogId, t0, requestedPack);
   }
 
   // Legacy non-streaming path (unchanged).
@@ -321,7 +326,7 @@ export async function GET(req: NextRequest) {
         saltMappings: { include: { janAushadhiProduct: true } },
       },
     });
-    const enrichedEmpty = enrich(fullMedEmpty, pincode);
+    const enrichedEmpty = enrich(fullMedEmpty, pincode, requestedPack);
     finalizeSearchLog(
       searchLogId,
       enrichedEmpty.listings,
@@ -338,7 +343,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const { relevantCount } = await persistScrapeResults(medRow, scraped, pincode);
+  const { relevantCount } = await persistScrapeResults(medRow, scraped, pincode, requestedPack);
 
   if (relevantCount === 0) {
     const fullMedEmpty = await prisma.medicine.findUnique({
@@ -348,7 +353,7 @@ export async function GET(req: NextRequest) {
         saltMappings: { include: { janAushadhiProduct: true } },
       },
     });
-    const enrichedZero = enrich(fullMedEmpty, pincode);
+    const enrichedZero = enrich(fullMedEmpty, pincode, requestedPack);
     finalizeSearchLog(
       searchLogId,
       enrichedZero.listings,
@@ -373,7 +378,7 @@ export async function GET(req: NextRequest) {
       saltMappings: { include: { janAushadhiProduct: true } },
     },
   });
-  const enrichedFinal = enrich(fullMed, pincode);
+  const enrichedFinal = enrich(fullMed, pincode, requestedPack);
   finalizeSearchLog(
     searchLogId,
     enrichedFinal.listings,
@@ -409,9 +414,10 @@ function buildStreamingResponse(
   scrapeQuery: string,
   pincode: string | null,
   searchLogId: string | null,
-  t0: number
+  t0: number,
+  requestedPack: number | null = null
 ): Response {
-  const ctx = buildFilterContext(medRow);
+  const ctx = buildFilterContext(medRow, requestedPack);
   const isBrowserish =
     typeof globalThis.process === "undefined" ||
     process.env.NODE_ENV !== "production";
@@ -450,7 +456,8 @@ function buildStreamingResponse(
         type: "medicine",
         medicine: enrich(
           { ...medWithMappings, listings: [] } as any,
-          pincode
+          pincode,
+          requestedPack
         ),
         pincode,
         searchLogId,
@@ -834,7 +841,8 @@ async function persistFinalListings(
 async function persistScrapeResults(
   medRow: any,
   scraped: ScrapedListing[],
-  pincode: string | null
+  pincode: string | null,
+  requestedPack: number | null = null
 ): Promise<{ relevantCount: number }> {
   // FILTER scraped results to ones that actually match what the user picked.
   //
@@ -957,6 +965,22 @@ async function persistScrapeResults(
 
     return out;
   };
+
+  // Fallback: if ingredients didn't provide a strength, try to recover one
+  // from the catalog medicine name itself. "Telma 40 Tablet" → 40. Only used
+  // when exactly one strength is parseable from the source text — otherwise
+  // we leave primaryStrength null to avoid false rejections.
+  if (primaryStrength == null) {
+    const fromName = extractStrengths(sourceText);
+    if (fromName.length === 1) {
+      primaryStrength = fromName[0];
+    }
+  }
+
+  // Pack-count parsing: the catalog's canonical strip count (when available)
+  // is the default filter; explicit ?packSize= overrides it.
+  const catalogPackCount = extractPackCount(medRow.packSize, sourceText);
+  const targetPackCount: number | null = requestedPack ?? catalogPackCount;
 
   // Formulation suffixes — different release profiles / delivery mechanisms.
   // "Avomine Tablet" and "Avomine Tablet MD" are clinically different products.
@@ -1082,6 +1106,29 @@ async function persistScrapeResults(
             !/^\d+(\.\d+)?$/.test(w)
         );
         if (extraWords.length > 4) return false;
+
+        // 6b. Salt-variant suffix rejection — see lib/search/filter.ts for
+        // the canonical comment. Catches "Telma D Tablet" when catalog is
+        // plain "Telma".
+        if (brandTokens.length === 1 && firstBrandIdx >= 0) {
+          const nextWord = prodWords[firstBrandIdx + 1];
+          if (
+            nextWord &&
+            /^[a-z]+$/.test(nextWord) &&
+            !NOISE_TOKENS.has(nextWord) &&
+            !FORMULATION_SUFFIXES.includes(nextWord) &&
+            !brandSet.has(nextWord)
+          ) {
+            return false;
+          }
+        }
+      }
+
+      // 7. Pack-count match. Reject ONLY when both sides have a confidently
+      // parseable pack count and they differ.
+      if (targetPackCount != null) {
+        const prodPack = extractPackCount(s.productName, s.packSize);
+        if (prodPack != null && prodPack !== targetPackCount) return false;
       }
 
       return true;
@@ -1347,7 +1394,7 @@ function dedupePerPharmacy(
  *   - drugDetail: curated uses/sideEffects/warnings (falls back to DB row)
  *   - listings: ensure each has a `deliveryEta` (compute on the fly for legacy rows)
  */
-function enrich(med: any, pincode: string | null) {
+function enrich(med: any, pincode: string | null, requestedPack: number | null = null) {
   if (!med) return med;
   const detail = lookupDrugDetail(med.brandName, med.ingredients);
   const drugDetail = {
@@ -1381,7 +1428,7 @@ function enrich(med: any, pincode: string | null) {
   // Read-time filtering: cached listings may predate the dosage form /
   // dedup / relevance filters added in persistScrapeResults. Apply the
   // same checks here so stale DB rows never reach the client.
-  listings = postFilterListings(listings, med);
+  listings = postFilterListings(listings, med, requestedPack);
 
   const saltMappings = med.saltMappings ?? [];
   return { ...med, listings, saltMappings, drugDetail };
@@ -1392,8 +1439,21 @@ function enrich(med: any, pincode: string | null) {
  * Mirrors the write-time logic in persistScrapeResults so that stale
  * cached data is cleaned up on the fly.
  */
-function postFilterListings(listings: any[], med: any): any[] {
+function postFilterListings(
+  listings: any[],
+  med: any,
+  requestedPack: number | null = null
+): any[] {
   if (!listings.length || !med) return listings;
+
+  // Mirror buildFilterContext's target pack-count derivation: prefer the
+  // user-requested size, else the catalog's canonical pack count.
+  const catalogPackCountForFilter = extractPackCount(
+    med.packSize ?? null,
+    med.brandName ?? med.name ?? ""
+  );
+  const targetPackCountForFilter: number | null =
+    requestedPack ?? catalogPackCountForFilter;
 
   const FORM_GROUPS: Record<string, string[]> = {
     tablet:      ["tablet", "tablets", "tab", "tabs"],
@@ -1478,6 +1538,30 @@ function postFilterListings(listings: any[], med: any): any[] {
         (w: string) => !brandSet.has(w) && !NOISE_TOKENS.has(w) && !/^\d+(\.\d+)?$/.test(w)
       );
       if (extraWords.length > 4) return false;
+
+      // Salt-variant rejection: e.g. "Telma D Tablet" vs catalog "Telma".
+      if (brandTokens.length === 1 && firstBrandIdx >= 0) {
+        const nextWord = prodWords[firstBrandIdx + 1];
+        const POST_BRAND_ALLOWLIST = new Set([
+          "md", "odt", "dt", "sr", "er", "xl", "xr", "cr", "pr", "la", "ir",
+          "fc", "ec", "chewable",
+        ]);
+        if (
+          nextWord &&
+          /^[a-z]+$/.test(nextWord) &&
+          !NOISE_TOKENS.has(nextWord) &&
+          !POST_BRAND_ALLOWLIST.has(nextWord) &&
+          !brandSet.has(nextWord)
+        ) {
+          return false;
+        }
+      }
+    }
+
+    // Pack-count match (cached listings carry packSize + productName too).
+    if (targetPackCountForFilter != null) {
+      const prodPack = extractPackCount(l.productName ?? "", l.packSize ?? "");
+      if (prodPack != null && prodPack !== targetPackCountForFilter) return false;
     }
 
     return true;

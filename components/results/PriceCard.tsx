@@ -4,40 +4,32 @@ import { motion } from "framer-motion";
 import { Crown, ExternalLink, Loader2, Package, Truck } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { useLocation } from "@/lib/location-context";
+import { extractPackCount } from "@/lib/pack-size";
 
-const PHARMACY_LABELS: Record<
-  string,
-  { label: string; color: string; pincodeAware: boolean }
-> = {
+const PHARMACY_LABELS: Record<string, { label: string; color: string }> = {
   "1mg": {
     label: "1mg",
     color: "bg-red-500/10 text-red-300 border-red-500/20",
-    pincodeAware: true,
   },
   netmeds: {
     label: "Netmeds",
     color: "bg-blue-500/10 text-blue-300 border-blue-500/20",
-    pincodeAware: false,
   },
   pharmeasy: {
     label: "PharmEasy",
     color: "bg-cyan-500/10 text-cyan-300 border-cyan-500/20",
-    pincodeAware: false,
   },
   apollo: {
     label: "Apollo",
     color: "bg-orange-500/10 text-orange-300 border-orange-500/20",
-    pincodeAware: true,
   },
   truemeds: {
     label: "Truemeds",
     color: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",
-    pincodeAware: false,
   },
   mrmed: {
     label: "MrMed",
     color: "bg-purple-500/10 text-purple-300 border-purple-500/20",
-    pincodeAware: false,
   },
 };
 
@@ -78,8 +70,8 @@ export function PriceCard({
   const meta = PHARMACY_LABELS[listing.pharmacyName] ?? {
     label: listing.pharmacyName,
     color: "bg-overlay-5 text-text-secondary border-overlay-10",
-    pincodeAware: false,
   };
+  const packCount = extractPackCount(listing.productName, listing.packSize);
   const buyParams = new URLSearchParams();
   if (location?.pincode) buyParams.set("pincode", location.pincode);
   if (searchLogId) buyParams.set("sl", searchLogId);
@@ -122,24 +114,20 @@ export function PriceCard({
           <span className={`pharmacy-badge border ${meta.color}`}>
             {meta.label}
           </span>
-          {!meta.pincodeAware && (
-            <span
-              className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-overlay-5 text-text-muted border border-overlay-5"
-              title="This pharmacy doesn't expose pincode-specific pricing on its search page — list price is national."
-            >
-              National
-            </span>
-          )}
         </div>
 
         <div className="flex-1 min-w-0">
           <p className="font-medium truncate">{listing.productName}</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-text-secondary">
-            {listing.packSize && (
+            {packCount != null ? (
+              <span className="flex items-center gap-1">
+                <Package size={11} /> {packCount} tablets
+              </span>
+            ) : listing.packSize ? (
               <span className="flex items-center gap-1">
                 <Package size={11} /> {listing.packSize}
               </span>
-            )}
+            ) : null}
             {notServiceable ? (
               <span className="flex items-center gap-1 text-red-400/90">
                 <Truck size={11} /> Not available at your pincode
@@ -175,7 +163,7 @@ export function PriceCard({
                 at {location.pincode}
               </div>
             )}
-            {listing.discountPercent && listing.discountPercent > 0 && (
+            {(listing.discountPercent ?? 0) > 0 && (
               <div className="text-[11px] text-accent-green font-medium">
                 {listing.discountPercent}% off
               </div>
