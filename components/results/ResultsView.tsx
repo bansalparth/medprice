@@ -322,9 +322,10 @@ export function ResultsView({ medicineId, query }: Props) {
   // once — user clicks override this thereafter.
   useEffect(() => {
     if (medicine && packSize == null) {
+      // extractPackCount(productName, packSize) — order matters.
       const canonical = extractPackCount(
-        medicine.packSize,
-        medicine.brandName ?? medicine.name
+        medicine.name ?? medicine.brandName ?? null,
+        medicine.packSize
       );
       if (canonical != null) setPackSize(canonical);
     }
@@ -460,41 +461,36 @@ export function ResultsView({ medicineId, query }: Props) {
                 {medicine.saltComposition}
               </p>
             )}
-            {packSize != null && (
-              <div className="flex items-center gap-2 mt-3">
-                <span className="text-[11px] uppercase tracking-wider text-text-muted">
-                  Pack size
-                </span>
-                <div className="inline-flex rounded-full bg-overlay-5 border border-overlay-10 p-0.5">
-                  {[10, 15, 30].map((n) => {
-                    const active = packSize === n;
-                    return (
-                      <button
-                        key={n}
-                        onClick={() => {
-                          if (!active) {
-                            setPackSize(n);
-                            // runSearch is keyed on packSize state — the
-                            // effect re-fires automatically. Force-refresh
-                            // when changing pack so any cached wrong-pack
-                            // rows are bypassed.
-                            runSearch({ packSize: n, refresh: true });
-                          }
-                        }}
-                        disabled={pendingPharmacies.size > 0}
-                        className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-                          active
-                            ? "bg-purple-500/30 text-white"
-                            : "text-text-secondary hover:text-white"
-                        } disabled:opacity-50 disabled:cursor-not-allowed`}
-                      >
-                        {n}
-                      </button>
-                    );
-                  })}
-                </div>
+            <div className="flex items-center gap-2 mt-3">
+              <span className="text-[11px] uppercase tracking-wider text-text-muted">
+                Pack size
+              </span>
+              <div className="inline-flex rounded-full bg-overlay-5 border border-overlay-10 p-0.5">
+                {([null, 10, 15, 30] as const).map((n) => {
+                  const active = packSize === n;
+                  const label = n == null ? "All" : String(n);
+                  return (
+                    <button
+                      key={label}
+                      onClick={() => {
+                        if (!active) {
+                          setPackSize(n);
+                          runSearch({ packSize: n, refresh: true });
+                        }
+                      }}
+                      disabled={pendingPharmacies.size > 0}
+                      className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                        active
+                          ? "bg-purple-500/30 text-white"
+                          : "text-text-secondary hover:text-white"
+                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
-            )}
+            </div>
             {stale && (
               <p className="text-xs text-yellow-400 mt-2">
                 Showing cached prices — live scrape returned no fresh results.
