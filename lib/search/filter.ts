@@ -118,15 +118,33 @@ export function buildFilterContext(
   }
 
   // Fallback: if ingredients didn't supply a strength, try to extract one
-  // from the full medicine display name ("Telma 40 Tablet" → 40). We try
-  // medRow.name first because brandName often omits the strength
-  // (e.g. brandName="Telma", name="Telma 40 Tablet"). Only accept when
-  // exactly one strength is parseable, otherwise we'd risk a false
-  // positive (e.g. "Crocin 500 vs 650" combo names).
+  // from the full medicine display name. We try medRow.name first because
+  // brandName often omits the strength (e.g. brandName="Telma",
+  // name="Telma 40 Tablet").
+  //
+  // extractStrengths() conservatively ignores bare numbers under 50 to
+  // avoid treating pack counts as strengths. But many real strengths are
+  // 40 / 20 / 10 mg — so we also accept a "<brand> <digit> <form>"
+  // pattern as a positive signal (the form keyword distinguishes it from
+  // a "10's" count).
   if (primaryStrength == null) {
-    const fromName = extractStrengths(medRow.name ?? sourceText);
+    const nameSrc = medRow.name ?? sourceText;
+    const fromName = extractStrengths(nameSrc);
     if (fromName.length === 1) {
       primaryStrength = fromName[0];
+    } else if (fromName.length === 0 && brandTokens.length > 0) {
+      const brandPat = brandTokens
+        .map((t) => t.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"))
+        .join("\\s+");
+      const formPat =
+        "(?:tablet|tablets|capsule|capsules|tab|cap|syrup|drops|injection|cream|gel|ointment|suspension|powder|sachet|inhaler|spray)";
+      const m = nameSrc
+        .toLowerCase()
+        .match(new RegExp(`\\b${brandPat}\\s+(\\d{1,4}(?:\\.\\d+)?)\\s+${formPat}\\b`, "i"));
+      if (m) {
+        const n = parseFloat(m[1]);
+        if (!isNaN(n) && n >= 1) primaryStrength = n;
+      }
     }
   }
 
