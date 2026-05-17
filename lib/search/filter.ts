@@ -118,11 +118,13 @@ export function buildFilterContext(
   }
 
   // Fallback: if ingredients didn't supply a strength, try to extract one
-  // from the medicine display name itself ("Telma 40 Tablet" → 40). Only
-  // accept when exactly one strength is parseable, otherwise we'd risk a
-  // false positive (e.g. "Crocin 500 vs 650" combo names).
+  // from the full medicine display name ("Telma 40 Tablet" → 40). We try
+  // medRow.name first because brandName often omits the strength
+  // (e.g. brandName="Telma", name="Telma 40 Tablet"). Only accept when
+  // exactly one strength is parseable, otherwise we'd risk a false
+  // positive (e.g. "Crocin 500 vs 650" combo names).
   if (primaryStrength == null) {
-    const fromName = extractStrengths(sourceText);
+    const fromName = extractStrengths(medRow.name ?? sourceText);
     if (fromName.length === 1) {
       primaryStrength = fromName[0];
     }

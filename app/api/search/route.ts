@@ -967,11 +967,13 @@ async function persistScrapeResults(
   };
 
   // Fallback: if ingredients didn't provide a strength, try to recover one
-  // from the catalog medicine name itself. "Telma 40 Tablet" → 40. Only used
-  // when exactly one strength is parseable from the source text — otherwise
-  // we leave primaryStrength null to avoid false rejections.
+  // from the full medicine name ("Telma 40 Tablet" → 40). We try
+  // medRow.name first because brandName often omits the strength
+  // (e.g. brandName="Telma", name="Telma 40 Tablet"). Only used when
+  // exactly one strength is parseable, otherwise leave it null to avoid
+  // false rejections (e.g. "Crocin 500 vs 650" combo names).
   if (primaryStrength == null) {
-    const fromName = extractStrengths(sourceText);
+    const fromName = extractStrengths(medRow.name ?? sourceText);
     if (fromName.length === 1) {
       primaryStrength = fromName[0];
     }
