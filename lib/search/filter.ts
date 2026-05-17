@@ -259,7 +259,12 @@ export function filterRelevantListings(
     // 2. Brand tokens must all be present
     if (!ctx.tokenRegexes.every((re) => re.test(s.productName))) return false;
 
-    // 3. Strength check
+    // 3. Strength check. Two layers:
+    //    a. Explicit "<n>mg/mcg/iu" or bare numbers ≥50 — the existing
+    //       extractStrengths heuristic.
+    //    b. "<brand> <digit> <form>" pattern (e.g. "Telma 20 Tablet"), so
+    //       small numeric variants below 50 are still caught when the
+    //       catalog strength is below 50 (Telma 20 vs Telma 40).
     if (ctx.primaryStrength != null) {
       const prodStrengths = extractStrengths(s.productName);
       if (
@@ -267,6 +272,22 @@ export function filterRelevantListings(
         !prodStrengths.includes(ctx.primaryStrength)
       ) {
         return false;
+      }
+      if (prodStrengths.length === 0 && ctx.brandTokens.length > 0) {
+        const brandPat = ctx.brandTokens
+          .map((t) => t.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"))
+          .join("\\s+");
+        const formPat =
+          "(?:tablet|tablets|capsule|capsules|tab|cap|syrup|drops|injection|cream|gel|ointment|suspension|powder|sachet|inhaler|spray)";
+        const m = s.productName
+          .toLowerCase()
+          .match(
+            new RegExp(`\\b${brandPat}\\s+(\\d{1,4}(?:\\.\\d+)?)\\s+${formPat}\\b`, "i")
+          );
+        if (m) {
+          const n = parseFloat(m[1]);
+          if (!isNaN(n) && n !== ctx.primaryStrength) return false;
+        }
       }
     }
 

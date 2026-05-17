@@ -1082,10 +1082,29 @@ async function persistScrapeResults(
       // 3. If we know the primary strength, the product's strengths (if any
       //    are mentioned) must include ours. If the product lists no strength
       //    at all we accept it (some listings just say "Avomine Tablet 10's").
+      //    Additionally use a "<brand> <digit> <form>" pattern to catch
+      //    sub-50 variants like "Telma 20 Tablet" where extractStrengths
+      //    bails out due to its bare-number floor.
       if (primaryStrength != null) {
         const prodStrengths = extractStrengths(s.productName);
         if (prodStrengths.length > 0 && !prodStrengths.includes(primaryStrength)) {
           return false;
+        }
+        if (prodStrengths.length === 0 && brandTokens.length > 0) {
+          const brandPat = brandTokens
+            .map((t: string) => t.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&"))
+            .join("\\s+");
+          const formPat =
+            "(?:tablet|tablets|capsule|capsules|tab|cap|syrup|drops|injection|cream|gel|ointment|suspension|powder|sachet|inhaler|spray)";
+          const m = s.productName
+            .toLowerCase()
+            .match(
+              new RegExp(`\\b${brandPat}\\s+(\\d{1,4}(?:\\.\\d+)?)\\s+${formPat}\\b`, "i")
+            );
+          if (m) {
+            const n = parseFloat(m[1]);
+            if (!isNaN(n) && n !== primaryStrength) return false;
+          }
         }
       }
 
