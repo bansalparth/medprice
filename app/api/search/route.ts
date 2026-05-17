@@ -11,9 +11,8 @@ import { readSid } from "@/lib/tracking";
 import {
   buildFilterContext,
   filterRelevantListings,
-  filterByPackCount,
   collectAvailablePackSizes,
-  pickBestPerPharmacy,
+  pickBestPerPharmacyAndPack,
 } from "@/lib/search/filter";
 
 const REFINE_WINDOW_MS = 30_000;
@@ -483,14 +482,16 @@ function buildStreamingResponse(
       await scrapeAllStream(scrapeQuery, pincode, async (pharmacyName, raw) => {
         try {
           const catalogMatched = filterRelevantListings(raw, ctx);
-          // Track every pack size that survived the catalog match — this is
-          // the universe the dropdown should expose, regardless of the
-          // currently-selected size.
+          // Track every pack size present after the catalog match. The
+          // pack-size dropdown is populated from this union; filtering by
+          // selection happens entirely client-side.
           for (const n of collectAvailablePackSizes(catalogMatched)) {
             availablePackSet.add(n);
           }
-          const filtered = filterByPackCount(catalogMatched, ctx);
-          const picked = pickBestPerPharmacy(filtered, ctx);
+          // One listing per (pharmacy, pack count) so the client has all
+          // pack-size variants available and can switch between them
+          // without a refetch.
+          const picked = pickBestPerPharmacyAndPack(catalogMatched, ctx);
 
           if (picked.length === 0) {
             writeMsg({ type: "listing", pharmacy: pharmacyName, listings: [] });
@@ -1144,12 +1145,11 @@ async function persistScrapeResults(
         }
       }
 
-      // 7. Pack-count match. Reject ONLY when both sides have a confidently
-      // parseable pack count and they differ.
-      if (targetPackCount != null) {
-        const prodPack = extractPackCount(s.productName, s.packSize);
-        if (prodPack != null && prodPack !== targetPackCount) return false;
-      }
+      // NOTE: pack-count is NOT filtered here. The client picks a pack
+      // size locally on the listings the server returned. `targetPackCount`
+      // is retained for backwards compatibility but unused on the
+      // write/read path now.
+      void targetPackCount;
 
       return true;
     });
@@ -1384,25 +1384,33 @@ function dedupePerPharmacy(
     return s;
   };
 
+  // Dedup by (pharmacy, pack-count) so the same pharmacy can keep both its
+  // 15-pack and 30-pack SKUs — the client filters by pack locally.
+  const bucketKey = (l: ScrapedListing): string => {
+    const pack = extractPackCount(l.productName, l.packSize);
+    return `${l.pharmacyName}::${pack ?? "unknown"}`;
+  };
+
   const best = new Map<string, ScrapedListing>();
   const bestScore = new Map<string, number>();
   for (const l of listings) {
+    const k = bucketKey(l);
     const sc = score(l.productName);
-    const cur = bestScore.get(l.pharmacyName);
+    const cur = bestScore.get(k);
     if (cur === undefined || sc > cur) {
-      best.set(l.pharmacyName, l);
-      bestScore.set(l.pharmacyName, sc);
+      best.set(k, l);
+      bestScore.set(k, sc);
     } else if (sc === cur) {
       // Tie-break: prefer in-stock first, then lower price. Picking a cheap
       // OOS SKU over an in-stock equivalent leaves the user staring at "Out
       // of stock" when the pharmacy actually has it.
-      const curListing = best.get(l.pharmacyName)!;
+      const curListing = best.get(k)!;
       const curPrice = curListing.sellingPrice ?? curListing.mrp ?? Infinity;
       const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
       if (l.inStock && !curListing.inStock) {
-        best.set(l.pharmacyName, l);
+        best.set(k, l);
       } else if (l.inStock === curListing.inStock && newPrice < curPrice) {
-        best.set(l.pharmacyName, l);
+        best.set(k, l);
       }
     }
   }
@@ -1608,19 +1616,15 @@ function postFilterListings(
     )
   ).sort((a, b) => a - b);
 
-  // Second pass: pack-count filter. Cached listings carry packSize +
-  // productName too. Reject only when both sides have a confidently
-  // parseable count and they differ.
-  if (targetPackCountForFilter != null) {
-    filtered = filtered.filter((l: any) => {
-      const prodPack = extractPackCount(l.productName ?? "", l.packSize ?? "");
-      if (prodPack != null && prodPack !== targetPackCountForFilter)
-        return false;
-      return true;
-    });
-  }
+  // NOTE: no pack-count filter here. The client filters locally on the
+  // packSize selector — server returns every (pharmacy, pack) variant
+  // and the dropdown is driven by `availablePackSizes` above.
+  // `targetPackCountForFilter` is retained only for legacy callers that
+  // still pass ?packSize=; we ignore it on the read path so the cached
+  // response is consistent across selections.
+  void targetPackCountForFilter;
 
-  // Per-pharmacy dedup: keep best match per pharmacy
+  // Per-(pharmacy, pack) dedup: keep best match per bucket.
   const sourceLower = sourceText.toLowerCase();
   const score = (name: string): number => {
     const lower = name.toLowerCase();
@@ -1634,19 +1638,25 @@ function postFilterListings(
     return s;
   };
 
+  const bucketKey = (l: any): string => {
+    const pack = extractPackCount(l.productName ?? "", l.packSize ?? "");
+    return `${l.pharmacyName}::${pack ?? "unknown"}`;
+  };
+
   const best = new Map<string, any>();
   const bestScore = new Map<string, number>();
   for (const l of filtered) {
+    const k = bucketKey(l);
     const sc = score(l.productName ?? "");
-    const cur = bestScore.get(l.pharmacyName);
+    const cur = bestScore.get(k);
     if (cur === undefined || sc > cur) {
-      best.set(l.pharmacyName, l);
-      bestScore.set(l.pharmacyName, sc);
+      best.set(k, l);
+      bestScore.set(k, sc);
     } else if (sc === cur) {
-      const curL = best.get(l.pharmacyName)!;
+      const curL = best.get(k)!;
       const curPrice = curL.sellingPrice ?? curL.mrp ?? Infinity;
       const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
-      if (newPrice < curPrice) best.set(l.pharmacyName, l);
+      if (newPrice < curPrice) best.set(k, l);
     }
   }
   filtered = Array.from(best.values());

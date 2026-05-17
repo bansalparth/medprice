@@ -396,22 +396,51 @@ export function pickBestPerPharmacy(
   listings: ScrapedListing[],
   ctx: FilterContext
 ): ScrapedListing[] {
+  return pickBestPer(listings, ctx, (l) => l.pharmacyName);
+}
+
+/**
+ * Per-(pharmacy, pack-count) dedup: pick the single best listing within each
+ * (pharmacy, pack count) bucket. Listings with no parseable pack count
+ * share one bucket per pharmacy ("unknown"), so cross-sells with no count
+ * still collapse to one card.
+ *
+ * Used by the search route so the response carries the FULL set of pack
+ * sizes a pharmacy stocks — the client then filters locally when the user
+ * toggles the pack-size selector, with no refetch.
+ */
+export function pickBestPerPharmacyAndPack(
+  listings: ScrapedListing[],
+  ctx: FilterContext
+): ScrapedListing[] {
+  return pickBestPer(listings, ctx, (l) => {
+    const pack = extractPackCount(l.productName, l.packSize);
+    return `${l.pharmacyName}::${pack ?? "unknown"}`;
+  });
+}
+
+function pickBestPer(
+  listings: ScrapedListing[],
+  ctx: FilterContext,
+  keyFn: (l: ScrapedListing) => string
+): ScrapedListing[] {
   const best = new Map<string, ScrapedListing>();
   const bestScore = new Map<string, number>();
   for (const l of listings) {
+    const k = keyFn(l);
     const sc = scoreListing(l.productName, ctx);
-    const cur = bestScore.get(l.pharmacyName);
+    const cur = bestScore.get(k);
     if (cur === undefined || sc > cur) {
-      best.set(l.pharmacyName, l);
-      bestScore.set(l.pharmacyName, sc);
+      best.set(k, l);
+      bestScore.set(k, sc);
     } else if (sc === cur) {
-      const curListing = best.get(l.pharmacyName)!;
+      const curListing = best.get(k)!;
       const curPrice = curListing.sellingPrice ?? curListing.mrp ?? Infinity;
       const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
       if (l.inStock && !curListing.inStock) {
-        best.set(l.pharmacyName, l);
+        best.set(k, l);
       } else if (l.inStock === curListing.inStock && newPrice < curPrice) {
-        best.set(l.pharmacyName, l);
+        best.set(k, l);
       }
     }
   }
