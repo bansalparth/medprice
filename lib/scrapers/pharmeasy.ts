@@ -1,4 +1,5 @@
 import { fetchText, extractJsonAssignment, parsePrice } from "./http";
+import { fetchProductOffer, slugFromUrl } from "./pharmeasy-product";
 import type { ScrapedListing } from "./types";
 
 interface PEItem {
@@ -15,6 +16,43 @@ interface PEItem {
   salePriceDecimal?: string | number;
   discountPercent?: string | number;
   productAvailabilityFlags?: { isAvailable?: boolean; notifyMe?: boolean };
+}
+
+// Per-SKU offer cache so basket scrapes don't re-fetch PDPs hit during
+// single-product search. Memory-only — TTL aligned with the DB FRESH window.
+const OFFER_TTL_MS = 30 * 60 * 1000;
+const offerCache = new Map<
+  string,
+  { at: number; value: Awaited<ReturnType<typeof fetchProductOffer>> }
+>();
+
+async function fetchOfferCached(slug: string) {
+  const hit = offerCache.get(slug);
+  if (hit && Date.now() - hit.at < OFFER_TTL_MS) return hit.value;
+  const value = await fetchProductOffer(slug);
+  offerCache.set(slug, { at: Date.now(), value });
+  return value;
+}
+
+// Bounded-concurrency map. We only enrich up to N concurrently to avoid hammering
+// pharmeasy.in — they happily 429 on tight bursts.
+async function mapConcurrent<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (true) {
+      const i = idx++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const n = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return results;
 }
 
 export async function scrape(
@@ -45,7 +83,7 @@ export async function scrape(
 
   const items: PEItem[] = data?.props?.pageProps?.searchResults ?? [];
 
-  return items
+  const baseListings: ScrapedListing[] = items
     .filter((it) => it.productType === 1 || it.entityType === 2)
     .slice(0, 12)
     .map((it) => {
@@ -81,4 +119,51 @@ export async function scrape(
       } satisfies ScrapedListing;
     })
     .filter((r) => r.productName);
+
+  // Enrich each in-stock listing with its conditional-coupon block from the PDP.
+  // The search endpoint's `salePriceDecimal` already includes Pharmeasy's best
+  // coupon (e.g. MED27PE: cart ≥ ₹1000). To rank pharmacies honestly we need
+  // the unconditional "assured" price as well — that only lives on the PDP.
+  await mapConcurrent(baseListings, 4, async (listing) => {
+    const slug = slugFromUrl(listing.productUrl);
+    if (!slug) return;
+    let offer: Awaited<ReturnType<typeof fetchProductOffer>> | null = null;
+    try {
+      offer = await fetchOfferCached(slug);
+    } catch {
+      offer = null;
+    }
+    if (!offer) return; // keep listing as-is; PriceCard will fall back
+
+    const assured = offer.assuredDiscountPrice ?? null;
+    const assuredPct = offer.assuredDiscountPercent ?? null;
+    const couponFinal = offer.salePrice ?? null;
+
+    // Only treat this as a conditional offer if Pharmeasy explicitly says so AND
+    // the post-coupon price is strictly cheaper than the assured price. If they
+    // match, there's no actionable coupon and we leave the listing flat.
+    if (
+      offer.coupon &&
+      assured != null &&
+      couponFinal != null &&
+      couponFinal < assured
+    ) {
+      listing.baseSellingPrice = assured;
+      listing.baseDiscountPercent =
+        assuredPct ?? undefined;
+      listing.coupon = {
+        code: offer.coupon.code,
+        minCartValue: offer.coupon.minCartValue ?? undefined,
+        finalPrice: couponFinal,
+        finalDiscountPercent: offer.discountPercent ?? undefined,
+      };
+    } else if (assured != null) {
+      // No active conditional coupon — but still record assured as the base so
+      // downstream code can normalize.
+      listing.baseSellingPrice = assured;
+      listing.baseDiscountPercent = assuredPct ?? undefined;
+    }
+  });
+
+  return baseListings;
 }

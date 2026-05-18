@@ -90,6 +90,18 @@ model PharmacyListing {
   locationPrice   Float?
   // Pincode this listing was last scraped against (delivery + stock are pincode-specific)
   pincode         String?
+  // Unconditional price (Pharmeasy: assured discount price). When null, sellingPrice
+  // is the unconditional price. Used for cheapest-pharmacy ranking — we never want
+  // to rank a pharmacy as cheapest based on a coupon-conditional discount.
+  baseSellingPrice    Float?
+  baseDiscountPercent Float?
+  // Conditional coupon (Pharmeasy: bestOfferDetails). When present, sellingPrice is
+  // the post-coupon price and couponFinalPrice == sellingPrice. We surface this as
+  // a secondary "with COUPON: ₹X (cart ≥ ₹Y)" line on the card.
+  couponCode          String?
+  couponMinCart       Float?
+  couponAppOnly       Boolean?
+  couponFinalPrice    Float?
   scrapedAt       DateTime @default(now())
 
   @@index([medicineId])

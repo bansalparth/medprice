@@ -456,8 +456,12 @@ function pickBestPer(
       bestScore.set(k, sc);
     } else if (sc === cur) {
       const curListing = best.get(k)!;
-      const curPrice = curListing.sellingPrice ?? curListing.mrp ?? Infinity;
-      const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
+      // Rank by the UNCONDITIONAL price (baseSellingPrice when present, e.g.
+      // Pharmeasy's assured-discount price). We never want to favor a listing
+      // because of a conditional coupon (cart-threshold / app-only).
+      const curPrice =
+        curListing.baseSellingPrice ?? curListing.sellingPrice ?? curListing.mrp ?? Infinity;
+      const newPrice = l.baseSellingPrice ?? l.sellingPrice ?? l.mrp ?? Infinity;
       if (l.inStock && !curListing.inStock) {
         best.set(k, l);
       } else if (l.inStock === curListing.inStock && newPrice < curPrice) {

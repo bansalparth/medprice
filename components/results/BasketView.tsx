@@ -21,10 +21,15 @@ const DEFAULT_VISIBLE_PHARMACIES = ["netmeds", "pharmeasy", "truemeds", "1mg"];
 
 interface PharmacyEntry {
   productName: string;
+  /** Unconditional per-unit price (no conditional coupon applied). */
   price: number;
   productUrl: string | null;
   inStock: boolean;
   deliveryEta: string | null;
+  /** Conditional coupon — only Pharmeasy exposes this today (MED27PE etc). */
+  couponCode?: string | null;
+  couponMinCart?: number | null;
+  couponFinalPrice?: number | null;
 }
 
 interface BasketItem {
@@ -349,21 +354,60 @@ export function BasketView({ queries }: { queries: string[] }) {
               <td className="p-3 font-semibold sticky left-0 bg-[var(--bg-primary)]/95 z-10">
                 Total
               </td>
-              {allPharmaciesInOrder.map((ph, i) => (
-                <td
-                  key={ph}
-                  className={`p-3 text-right font-display font-bold ${
-                    i === 0 ? "text-purple-300 text-lg" : ""
-                  }`}
-                >
-                  {formatCurrency(data.totals[ph]?.total ?? 0)}
-                  {data.totals[ph]?.covered < data.items.length && (
-                    <div className="text-[10px] text-text-muted font-normal font-body">
-                      ({data.totals[ph]?.covered}/{data.items.length})
-                    </div>
-                  )}
-                </td>
-              ))}
+              {allPharmaciesInOrder.map((ph, i) => {
+                // Conditional-coupon math: if any item at this pharmacy
+                // carries a coupon (Pharmeasy MED27PE etc), compute the
+                // alternate total and see if the basket clears the min cart.
+                let couponTotal = 0;
+                let minCartFloor = 0;
+                let anyCoupon = false;
+                let couponCode: string | null = null;
+                for (const item of data.items) {
+                  const e = item.perPharmacy[ph];
+                  if (!e) continue;
+                  couponTotal += e.couponFinalPrice ?? e.price;
+                  if (e.couponCode) {
+                    anyCoupon = true;
+                    couponCode = couponCode ?? e.couponCode;
+                    if (e.couponMinCart != null && e.couponMinCart > minCartFloor) {
+                      minCartFloor = e.couponMinCart;
+                    }
+                  }
+                }
+                const baseTotal = data.totals[ph]?.total ?? 0;
+                const showCouponLine =
+                  anyCoupon &&
+                  couponTotal < baseTotal &&
+                  baseTotal >= minCartFloor;
+                return (
+                  <td
+                    key={ph}
+                    className={`p-3 text-right font-display font-bold ${
+                      i === 0 ? "text-purple-300 text-lg" : ""
+                    }`}
+                  >
+                    {formatCurrency(baseTotal)}
+                    {data.totals[ph]?.covered < data.items.length && (
+                      <div className="text-[10px] text-text-muted font-normal font-body">
+                        ({data.totals[ph]?.covered}/{data.items.length})
+                      </div>
+                    )}
+                    {showCouponLine && (
+                      <div
+                        className="text-[10px] text-text-muted font-normal font-body leading-tight mt-1"
+                        title={`Applies on app orders with cart ≥ ${formatCurrency(
+                          minCartFloor
+                        )}`}
+                      >
+                        with {couponCode}:{" "}
+                        <span className="text-text-secondary">
+                          {formatCurrency(couponTotal)}
+                        </span>
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
               <td className="p-3 text-right font-display font-bold text-emerald-400 text-lg">
                 {formatCurrency(data.janAushadhi.total)}
                 {data.janAushadhi.covered < data.items.length && (

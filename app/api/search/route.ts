@@ -521,6 +521,12 @@ function buildStreamingResponse(
               locationPrice: null,
               pincode: pincode ?? null,
               scrapedAt: new Date().toISOString(),
+              baseSellingPrice: l.baseSellingPrice ?? null,
+              baseDiscountPercent: l.baseDiscountPercent ?? null,
+              couponCode: l.coupon?.code ?? null,
+              couponMinCart: l.coupon?.minCartValue ?? null,
+              couponAppOnly: l.coupon?.appOnly ?? null,
+              couponFinalPrice: l.coupon?.finalPrice ?? null,
             };
           });
 
@@ -784,6 +790,12 @@ async function persistFinalListings(
             serviceable: eta.serviceable,
             locationPrice,
             pincode: pincode ?? null,
+            baseSellingPrice: s.baseSellingPrice ?? null,
+            baseDiscountPercent: s.baseDiscountPercent ?? null,
+            couponCode: s.coupon?.code ?? null,
+            couponMinCart: s.coupon?.minCartValue ?? null,
+            couponAppOnly: s.coupon?.appOnly ?? null,
+            couponFinalPrice: s.coupon?.finalPrice ?? null,
           };
         }),
       })
@@ -1308,6 +1320,12 @@ async function persistScrapeResults(
         serviceable: eta.serviceable,
         locationPrice,
         pincode: pincode ?? null,
+        baseSellingPrice: s.baseSellingPrice ?? null,
+        baseDiscountPercent: s.baseDiscountPercent ?? null,
+        couponCode: s.coupon?.code ?? null,
+        couponMinCart: s.coupon?.minCartValue ?? null,
+        couponAppOnly: s.coupon?.appOnly ?? null,
+        couponFinalPrice: s.coupon?.finalPrice ?? null,
       };
     }),
   });
@@ -1424,8 +1442,13 @@ function dedupePerPharmacy(
       // OOS SKU over an in-stock equivalent leaves the user staring at "Out
       // of stock" when the pharmacy actually has it.
       const curListing = best.get(k)!;
-      const curPrice = curListing.sellingPrice ?? curListing.mrp ?? Infinity;
-      const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
+      // Rank by unconditional price — baseSellingPrice is set for Pharmeasy
+      // when a conditional coupon is active. Without it we'd pick the SKU
+      // with the cheapest coupon-applied price, which the user can't always
+      // unlock (cart threshold / app-only).
+      const curPrice =
+        curListing.baseSellingPrice ?? curListing.sellingPrice ?? curListing.mrp ?? Infinity;
+      const newPrice = l.baseSellingPrice ?? l.sellingPrice ?? l.mrp ?? Infinity;
       if (l.inStock && !curListing.inStock) {
         best.set(k, l);
       } else if (l.inStock === curListing.inStock && newPrice < curPrice) {
@@ -1673,18 +1696,22 @@ function postFilterListings(
       bestScore.set(k, sc);
     } else if (sc === cur) {
       const curL = best.get(k)!;
-      const curPrice = curL.sellingPrice ?? curL.mrp ?? Infinity;
-      const newPrice = l.sellingPrice ?? l.mrp ?? Infinity;
+      const curPrice =
+        curL.baseSellingPrice ?? curL.sellingPrice ?? curL.mrp ?? Infinity;
+      const newPrice =
+        l.baseSellingPrice ?? l.sellingPrice ?? l.mrp ?? Infinity;
       if (newPrice < curPrice) best.set(k, l);
     }
   }
   filtered = Array.from(best.values());
 
-  // Re-sort: in-stock first, then by price
+  // Re-sort: in-stock first, then by UNCONDITIONAL price (baseSellingPrice
+  // wins over sellingPrice when present — Pharmeasy's coupon-applied price
+  // should not push it artificially to the top).
   filtered.sort((a: any, b: any) => {
     if (a.inStock !== b.inStock) return a.inStock ? -1 : 1;
-    const ap = a.sellingPrice ?? a.mrp ?? Infinity;
-    const bp = b.sellingPrice ?? b.mrp ?? Infinity;
+    const ap = a.baseSellingPrice ?? a.sellingPrice ?? a.mrp ?? Infinity;
+    const bp = b.baseSellingPrice ?? b.sellingPrice ?? b.mrp ?? Infinity;
     return ap - bp;
   });
 

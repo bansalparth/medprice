@@ -22,10 +22,17 @@ interface BasketItem {
     string,
     {
       productName: string;
+      /** Unconditional per-unit price (no conditional coupon applied). */
       price: number;
       productUrl: string | null;
       inStock: boolean;
       deliveryEta: string | null;
+      /** Conditional coupon fields (Pharmeasy MED27PE etc). When present,
+       *  the basket UI shows a "with COUPON" total when the basket sum
+       *  crosses couponMinCart. */
+      couponCode?: string | null;
+      couponMinCart?: number | null;
+      couponFinalPrice?: number | null;
     } | null
   >;
   janAushadhiPrice: number | null;
@@ -120,6 +127,12 @@ async function processOne(
             productUrl: s.productUrl,
             deliveryEta: svc?.deliveryEta ?? null,
             pincode: pincode ?? null,
+            baseSellingPrice: s.baseSellingPrice ?? null,
+            baseDiscountPercent: s.baseDiscountPercent ?? null,
+            couponCode: s.coupon?.code ?? null,
+            couponMinCart: s.coupon?.minCartValue ?? null,
+            couponAppOnly: s.coupon?.appOnly ?? null,
+            couponFinalPrice: s.coupon?.finalPrice ?? null,
           };
         }),
       });
@@ -173,19 +186,32 @@ async function processOne(
     }
   }
 
-  // Cheapest per pharmacy
+  // Cheapest per pharmacy. Rank + display by UNCONDITIONAL price
+  // (baseSellingPrice ?? sellingPrice). Pharmeasy's `sellingPrice` includes
+  // its best conditional coupon (cart ≥ ₹1000) — we surface that coupon
+  // separately so basket totals reflect what the user actually pays.
+  const effective = (l: any) =>
+    (l.baseSellingPrice ?? l.sellingPrice ?? Infinity) as number;
   const perPharmacy: BasketItem["perPharmacy"] = {};
   for (const ph of PHARMACIES) {
     const cheapest = listings
-      .filter((l) => l.pharmacyName === ph && l.sellingPrice != null)
-      .sort((a, b) => (a.sellingPrice ?? 0) - (b.sellingPrice ?? 0))[0];
+      .filter(
+        (l) =>
+          l.pharmacyName === ph &&
+          (l.baseSellingPrice != null || l.sellingPrice != null)
+      )
+      .sort((a, b) => effective(a) - effective(b))[0];
     perPharmacy[ph] = cheapest
       ? {
           productName: cheapest.productName,
-          price: cheapest.sellingPrice ?? 0,
+          price:
+            cheapest.baseSellingPrice ?? cheapest.sellingPrice ?? 0,
           productUrl: cheapest.productUrl ?? null,
           inStock: cheapest.inStock,
           deliveryEta: cheapest.deliveryEta ?? null,
+          couponCode: (cheapest as any).couponCode ?? null,
+          couponMinCart: (cheapest as any).couponMinCart ?? null,
+          couponFinalPrice: (cheapest as any).couponFinalPrice ?? null,
         }
       : null;
   }

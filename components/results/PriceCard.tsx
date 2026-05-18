@@ -50,6 +50,17 @@ interface PriceCardProps {
     etaPending?: boolean;
     serviceable?: boolean | null;
     locationPrice?: number | null;
+    /**
+     * Unconditional price (Pharmeasy: assured discount). When present, this is
+     * what we show as the primary price — the coupon-conditional `sellingPrice`
+     * is surfaced as a secondary "with COUPON" line instead.
+     */
+    baseSellingPrice?: number | null;
+    baseDiscountPercent?: number | null;
+    couponCode?: string | null;
+    couponMinCart?: number | null;
+    couponAppOnly?: boolean | null;
+    couponFinalPrice?: number | null;
   };
   medicineId: string;
   isCheapest?: boolean;
@@ -76,7 +87,12 @@ export function PriceCard({
   if (location?.pincode) buyParams.set("pincode", location.pincode);
   if (searchLogId) buyParams.set("sl", searchLogId);
   if (typeof position === "number") buyParams.set("pos", String(position));
-  if (listing.sellingPrice != null) buyParams.set("p", String(listing.sellingPrice));
+  // Log the UNCONDITIONAL price (what the user actually saw on the card),
+  // not the coupon-applied `sellingPrice` — otherwise click analytics undercount
+  // Pharmeasy's real price by the coupon delta.
+  const loggedPrice =
+    listing.baseSellingPrice ?? listing.sellingPrice ?? null;
+  if (loggedPrice != null) buyParams.set("p", String(loggedPrice));
   if (listing.mrp != null) buyParams.set("m", String(listing.mrp));
   if (isCheapest) buyParams.set("c", "1");
   const buyHref = `/api/go/${listing.pharmacyName}/${medicineId}${
@@ -88,11 +104,21 @@ export function PriceCard({
   // 11:00 pm" or 1mg's "Get in 30 minutes"). No more static heuristics.
   const deliveryLabel = listing.deliveryEta ?? null;
 
-  // Show location-specific price when it differs from the search-level price
-  const displayPrice = listing.locationPrice ?? listing.sellingPrice ?? listing.mrp;
+  // Primary price: unconditional. Pharmeasy's `sellingPrice` already includes
+  // its best conditional coupon (e.g. MED27PE: 27% off above ₹1000 cart). The
+  // `baseSellingPrice` is the "assured" price without that coupon — what the
+  // user actually pays in a single-product checkout. We show base as primary
+  // and surface the conditional offer as a secondary line below.
+  const unconditional =
+    listing.baseSellingPrice ?? listing.sellingPrice ?? listing.mrp;
+  const displayPrice = listing.locationPrice ?? unconditional;
+  const displayDiscount =
+    listing.baseDiscountPercent ?? listing.discountPercent ?? null;
   const displayMrp = listing.mrp;
   const isLocationPrice = listing.locationPrice != null && listing.locationPrice !== listing.sellingPrice;
   const notServiceable = listing.serviceable === false;
+  const hasCoupon =
+    listing.couponCode != null && listing.couponFinalPrice != null;
 
   return (
     <motion.div
@@ -163,9 +189,27 @@ export function PriceCard({
                 at {location.pincode}
               </div>
             )}
-            {(listing.discountPercent ?? 0) > 0 && (
+            {(displayDiscount ?? 0) > 0 && (
               <div className="text-[11px] text-accent-green font-medium">
-                {listing.discountPercent}% off
+                {Math.round(displayDiscount as number)}% off
+              </div>
+            )}
+            {hasCoupon && (
+              <div
+                className="mt-1.5 text-[10px] text-text-muted leading-tight"
+                title="This discount only applies when the order meets the coupon's conditions."
+              >
+                <div>
+                  with {listing.couponCode}:{" "}
+                  <span className="text-text-secondary font-medium">
+                    {formatCurrency(listing.couponFinalPrice)}
+                  </span>
+                </div>
+                {listing.couponMinCart != null && (
+                  <div className="text-text-muted/80">
+                    Cart ≥ {formatCurrency(listing.couponMinCart)}
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -23,6 +23,26 @@ export interface ScrapedListing {
   inStock: boolean;
   productUrl: string;
   pharmacyName: string;
+  /**
+   * Unconditional price — what the user actually pays without any conditional
+   * coupon (Pharmeasy "assured discount"). When null, `sellingPrice` itself is
+   * the unconditional price. Drives the cheapest-pharmacy ranking — we never
+   * want to rank a pharmacy as cheapest using a coupon-conditional price.
+   */
+  baseSellingPrice?: number;
+  baseDiscountPercent?: number;
+  /**
+   * Conditional coupon (e.g. Pharmeasy's MED27PE: 27% off above ₹1000 cart).
+   * When present, `sellingPrice` equals `coupon.finalPrice` (post-coupon).
+   * Surfaced as a secondary "with COUPON: ₹X — cart ≥ ₹Y" line on the card.
+   */
+  coupon?: {
+    code: string;
+    minCartValue?: number;
+    appOnly?: boolean;
+    finalPrice: number;
+    finalDiscountPercent?: number;
+  };
 }
 
 export type ScraperFn = (

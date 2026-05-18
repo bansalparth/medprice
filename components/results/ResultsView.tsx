@@ -31,6 +31,17 @@ interface Listing {
    *  this listing id — at which point `deliveryEta` is the real value
    *  (or null if the pharmacy doesn't expose one). */
   etaPending?: boolean;
+  /** Unconditional price + conditional coupon block (Pharmeasy only today).
+   *  Drives the cheapest-pharmacy ranking and the "with COUPON" secondary
+   *  line on the price card. */
+  baseSellingPrice?: number | null;
+  baseDiscountPercent?: number | null;
+  couponCode?: string | null;
+  couponMinCart?: number | null;
+  couponAppOnly?: boolean | null;
+  couponFinalPrice?: number | null;
+  locationPrice?: number | null;
+  serviceable?: boolean | null;
 }
 
 interface DrugDetail {
@@ -357,18 +368,25 @@ export function ResultsView({ medicineId, query }: Props) {
   // from card to card as cheaper results land. Once the stream is `done`
   // (all pharmacies have responded), we sort by price and mark the real
   // cheapest with the Best Online Price badge.
+  // Rank by UNCONDITIONAL price (baseSellingPrice ?? sellingPrice). Pharmeasy's
+  // `sellingPrice` already bakes in its best conditional coupon (cart ≥ ₹1000,
+  // app-only), so sorting purely by `sellingPrice` puts it artificially first.
+  const effectivePrice = (l: Listing) =>
+    l.baseSellingPrice ?? l.sellingPrice ?? l.mrp ?? Infinity;
   const inStockListings = streamDone
-    ? [...inStockListingsArrivalOrder].sort((a, b) => {
-        const ap = a.sellingPrice ?? a.mrp ?? Infinity;
-        const bp = b.sellingPrice ?? b.mrp ?? Infinity;
-        return ap - bp;
-      })
+    ? [...inStockListingsArrivalOrder].sort(
+        (a, b) => effectivePrice(a) - effectivePrice(b)
+      )
     : inStockListingsArrivalOrder;
 
   const cheapest = streamDone
-    ? inStockListings.find((l) => l.sellingPrice != null)
+    ? inStockListings.find(
+        (l) => (l.baseSellingPrice ?? l.sellingPrice) != null
+      )
     : null;
-  const cheapestPrice = cheapest?.sellingPrice ?? null;
+  const cheapestPrice = cheapest
+    ? cheapest.baseSellingPrice ?? cheapest.sellingPrice ?? null
+    : null;
   const janAushadhiMatch = medicine?.saltMappings?.[0]?.janAushadhiProduct ?? null;
   const savings =
     janAushadhiMatch?.mrpBppi && cheapestPrice
