@@ -553,9 +553,15 @@ function buildStreamingResponse(
                     svcMap.get(picked[idx].productUrl ?? "") ??
                     svcMap.get(picked[idx].pharmacyName);
                   if (!svc) return;
-                  // Keep per-pharmacy snapshot for the persist path (it
-                  // doesn't yet differentiate by URL).
-                  svcByPharmacy.set(picked[idx].pharmacyName, svc);
+                  // Persist path looks up by URL first (so per-pack listings
+                  // don't share an svc), then by pharmacy name as a fallback
+                  // for single-listing-per-pharmacy cases.
+                  if (picked[idx].productUrl) {
+                    svcByPharmacy.set(picked[idx].productUrl!, svc);
+                  }
+                  if (!svcByPharmacy.has(picked[idx].pharmacyName)) {
+                    svcByPharmacy.set(picked[idx].pharmacyName, svc);
+                  }
                   const origPrice = picked[idx].sellingPrice;
                   writeMsg({
                     type: "serviceability",
@@ -768,7 +774,10 @@ async function persistFinalListings(
     .then(() =>
       prisma.pharmacyListing.createMany({
         data: finalListings.map((s) => {
-          const svc = svcByPharmacy.get(s.pharmacyName);
+          // Look up svc by productUrl so per-pack-size listings don't share.
+          const svc =
+            (s.productUrl && svcByPharmacy.get(s.productUrl)) ||
+            svcByPharmacy.get(s.pharmacyName);
           // Store only the REAL ETA the pharmacy advertised. If the live
           // check returned null, store null — never the static guess. The
           // pincode-tier classification still drives `serviceable`.
@@ -1231,7 +1240,9 @@ async function persistScrapeResults(
   // real stock and, where available, location-specific pricing.
   if (svcResults) {
     relevantScraped = relevantScraped.map((s) => {
-      const svc = svcResults!.get(s.pharmacyName);
+      const svc =
+        (s.productUrl && svcResults!.get(s.productUrl)) ||
+        svcResults!.get(s.pharmacyName);
       if (!svc) return s;
       return {
         ...s,
@@ -1258,7 +1269,9 @@ async function persistScrapeResults(
   // hasInStock drives autocomplete visibility — true if at least one
   // pharmacy listing is buyable. Mirrors the per-listing logic below.
   const hasInStock = relevantScraped.some((s) => {
-    const svc = svcResults?.get(s.pharmacyName);
+    const svc =
+      (s.productUrl ? svcResults?.get(s.productUrl) : undefined) ??
+      svcResults?.get(s.pharmacyName);
     const eta = svc
       ? { serviceable: svc.serviceable }
       : estimateDelivery(s.pharmacyName, pincode);
@@ -1296,7 +1309,9 @@ async function persistScrapeResults(
   await prisma.pharmacyListing.deleteMany({ where: { medicineId: medRow.id } });
   await prisma.pharmacyListing.createMany({
     data: relevantScraped.map((s) => {
-      const svc = svcResults?.get(s.pharmacyName);
+      const svc =
+      (s.productUrl ? svcResults?.get(s.productUrl) : undefined) ??
+      svcResults?.get(s.pharmacyName);
       const eta = svc
         ? { eta: svc.deliveryEta ?? estimateDelivery(s.pharmacyName, pincode).eta, serviceable: svc.serviceable }
         : estimateDelivery(s.pharmacyName, pincode);
