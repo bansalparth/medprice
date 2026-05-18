@@ -138,6 +138,18 @@ export async function scrape(
     const assured = offer.assuredDiscountPrice ?? null;
     const assuredPct = offer.assuredDiscountPercent ?? null;
     const couponFinal = offer.salePrice ?? null;
+    const searchPrice = listing.sellingPrice ?? null;
+
+    // Sanity check: the PDP's default-variant salePrice must roughly match the
+    // search row's sellingPrice. If they're more than 25% off, the PDP picked
+    // a different variant than what search surfaced (e.g. search returned the
+    // 15-tab strip's price but PDP's default is the 30-tab pack). In that case
+    // bail — enrichment would mismatch units and the card would look wrong.
+    if (searchPrice != null && couponFinal != null) {
+      const ratio = Math.max(searchPrice, couponFinal) /
+        Math.max(1, Math.min(searchPrice, couponFinal));
+      if (ratio > 1.25) return;
+    }
 
     // Only treat this as a conditional offer if Pharmeasy explicitly says so AND
     // the post-coupon price is strictly cheaper than the assured price. If they
@@ -149,8 +161,7 @@ export async function scrape(
       couponFinal < assured
     ) {
       listing.baseSellingPrice = assured;
-      listing.baseDiscountPercent =
-        assuredPct ?? undefined;
+      listing.baseDiscountPercent = assuredPct ?? undefined;
       listing.coupon = {
         code: offer.coupon.code,
         minCartValue: offer.coupon.minCartValue ?? undefined,
