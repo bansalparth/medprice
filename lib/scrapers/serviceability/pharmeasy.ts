@@ -75,17 +75,15 @@ export async function check(
     return null;
   }
 
-  // For serviceability we report the *unconditional* price (assured) when
-  // available, so cheapest-pharmacy ranking isn't skewed by a coupon-conditional
-  // price. The full coupon block is captured by the search-time enrichment.
-  const price =
-    offer.assuredDiscountPrice ?? offer.salePrice ?? undefined;
-
+  // Report the same coupon-applied salePrice we've always returned here —
+  // it flows into the listing's sellingPrice via the streaming serviceability
+  // merge. The unconditional (assured) price is captured separately at
+  // search time on the ScrapedListing.baseSellingPrice field.
   return {
     inStock: offer.inStock,
     serviceable: true,
     deliveryEta,
-    price: price ?? undefined,
+    price: offer.salePrice ?? undefined,
     mrp: offer.costPrice ?? undefined,
     source: "live",
   };
