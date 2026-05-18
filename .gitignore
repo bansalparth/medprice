@@ -36,3 +36,4 @@ next-env.d.ts
 # Temp
 tmp-*.pdf
 .vercel
+tsconfig.tsbuildinfo

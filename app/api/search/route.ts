@@ -546,8 +546,15 @@ function buildStreamingResponse(
               .then((svcMap) => {
                 if (!svcMap) return;
                 clientListings.forEach((cl, idx) => {
-                  const svc = svcMap.get(picked[idx].pharmacyName);
+                  // checkAll keys by productUrl when there are multiple
+                  // listings per pharmacy (per-pack-size dedup), with a
+                  // pharmacy-name fallback for legacy single-listing cases.
+                  const svc =
+                    svcMap.get(picked[idx].productUrl ?? "") ??
+                    svcMap.get(picked[idx].pharmacyName);
                   if (!svc) return;
+                  // Keep per-pharmacy snapshot for the persist path (it
+                  // doesn't yet differentiate by URL).
                   svcByPharmacy.set(picked[idx].pharmacyName, svc);
                   const origPrice = picked[idx].sellingPrice;
                   writeMsg({

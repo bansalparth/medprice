@@ -61,17 +61,28 @@ export async function checkAll(
 
   const tasks = listings.map(async (listing) => {
     const checker = CHECKERS[listing.pharmacyName];
+    // Key by productUrl so multiple listings from the same pharmacy (e.g.
+    // 15-pack + 30-pack from the per-pack dedup) each carry their own svc.
+    // Callers that still want a per-pharmacy lookup can derive it via the
+    // helper below.
+    const key = listing.productUrl ?? listing.pharmacyName;
 
     if (!checker || !listing.productUrl) {
       // No live checker — leave deliveryEta null (no fake estimate) and use
       // the static tier classification only for serviceability.
       const eta = estimateDelivery(listing.pharmacyName, pincode);
-      results.set(listing.pharmacyName, {
+      results.set(key, {
         inStock: listing.inStock,
         serviceable: eta.serviceable,
         deliveryEta: null,
         source: "static",
       });
+      // Also write under pharmacyName for back-compat with callers that
+      // still index by pharmacy (only matters when there's exactly one
+      // listing per pharmacy, which is the legacy case).
+      if (!results.has(listing.pharmacyName)) {
+        results.set(listing.pharmacyName, results.get(key)!);
+      }
       return;
     }
 
@@ -84,23 +95,31 @@ export async function checkAll(
 
       if (live) {
         const eta = estimateDelivery(listing.pharmacyName, pincode);
-        results.set(listing.pharmacyName, {
+        const value = {
           ...live,
           // Preserve null deliveryEta — caller decides what to do with it.
           // Only intersect serviceability with the pincode-tier classification
           // so an unserviceable rest-tier pin stays out of stock.
           serviceable: live.serviceable && eta.serviceable,
-        });
+        };
+        results.set(key, value);
+        if (!results.has(listing.pharmacyName)) {
+          results.set(listing.pharmacyName, value);
+        }
       } else {
         // Live check failed or timed out — keep null ETA; surface stock
         // status from the search result.
         const eta = estimateDelivery(listing.pharmacyName, pincode);
-        results.set(listing.pharmacyName, {
+        const fallback = {
           inStock: listing.inStock,
           serviceable: eta.serviceable,
           deliveryEta: null,
-          source: "static",
-        });
+          source: "static" as const,
+        };
+        results.set(key, fallback);
+        if (!results.has(listing.pharmacyName)) {
+          results.set(listing.pharmacyName, fallback);
+        }
       }
     } catch (err) {
       console.error(
@@ -108,12 +127,16 @@ export async function checkAll(
         (err as Error).message
       );
       const eta = estimateDelivery(listing.pharmacyName, pincode);
-      results.set(listing.pharmacyName, {
+      const fallback = {
         inStock: listing.inStock,
         serviceable: eta.serviceable,
         deliveryEta: null,
-        source: "static",
-      });
+        source: "static" as const,
+      };
+      results.set(key, fallback);
+      if (!results.has(listing.pharmacyName)) {
+        results.set(listing.pharmacyName, fallback);
+      }
     }
   });
 
