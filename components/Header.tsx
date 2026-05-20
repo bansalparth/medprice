@@ -12,19 +12,21 @@ export function Header() {
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-primary)]/80 border-b border-[var(--border)]">
       <div className="max-w-6xl mx-auto px-4 md:px-6 py-4 flex items-center justify-between gap-3">
-        <Link href="/" className="flex items-center gap-2.5 group shrink-0">
-          <div className="rounded-lg bg-[#1a1a1a] flex items-center justify-center px-2 h-9 overflow-hidden group-hover:scale-105 transition-transform shadow-lg shadow-black/30">
+        <Link href="/" className="flex items-center group shrink-0">
+          {/* Wordmark contains the icon, "MEDPRICE", the heartbeat trace, and
+              the tagline already — so this single image replaces the old
+              icon box + the "MedPrice" text node. Dark chip matches the
+              wordmark's near-black background; rounded corners hide the
+              hard edge against the translucent header. */}
+          <div className="rounded-lg bg-[#06040d] flex items-center px-2.5 py-1 overflow-hidden group-hover:scale-105 transition-transform shadow-lg shadow-black/30">
             <Image
-              src="/logo.png"
-              alt="MedPrice"
-              width={750}
-              height={280}
+              src="/logo-wordmark.png"
+              alt="MedPrice — your medicines, best price"
+              width={711}
+              height={332}
               priority
-              className="h-6 w-auto"
+              className="h-7 w-auto"
             />
-          </div>
-          <div className="font-display font-bold text-lg tracking-tight">
-            Med<span className="gradient-text">Price</span>
           </div>
         </Link>
 
