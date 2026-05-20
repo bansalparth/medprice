@@ -185,9 +185,57 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // IP-geolocation fallback. Hit `/api/geo` (Vercel's IP headers, free) and
+  // reverse-geocode the coarse city-centroid lat/lng into a pincode. Used as
+  // a last resort when navigator.geolocation returns POSITION_UNAVAILABLE
+  // (common on Safari + macOS, corporate VPNs, devices without a quick fix).
+  const fallbackToIpGeo = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/geo", { cache: "no-store" });
+      if (!res.ok) return false;
+      const data = (await res.json()) as {
+        ok: boolean;
+        lat: number | null;
+        lng: number | null;
+        city: string | null;
+        state: string | null;
+      };
+      if (!data.ok || data.lat == null || data.lng == null) return false;
+      const rg = await reverseGeocode(data.lat, data.lng);
+      const next: UserLocation = {
+        lat: data.lat,
+        lng: data.lng,
+        // Prefer reverse-geocode for city/state (street-level accuracy beats
+        // IP-derived city-centroid) but fall back to IP fields when geocode
+        // returns nothing.
+        pincode: rg.pincode,
+        city: rg.city ?? data.city,
+        state: rg.state ?? data.state,
+        capturedAt: Date.now(),
+      };
+      setLocation(next);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {}
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const request = useCallback(() => {
     if (!navigator.geolocation) {
-      setError("Geolocation isn't supported by this browser.");
+      // Geolocation API not available — go straight to IP fallback.
+      setLoading(true);
+      setError(null);
+      fallbackToIpGeo().then((ok) => {
+        setLoading(false);
+        if (!ok) {
+          setError(
+            "Geolocation isn't supported by this browser. Pick a location below."
+          );
+        }
+      });
       return;
     }
     setLoading(true);
@@ -210,21 +258,33 @@ export function LocationProvider({ children }: { children: React.ReactNode }) {
         } catch {}
         setLoading(false);
       },
-      (err) => {
-        setLoading(false);
+      async (err) => {
+        // Browser couldn't get a fix. If the user actively denied permission,
+        // an IP fallback would feel sneaky — surface the denial instead.
+        // For POSITION_UNAVAILABLE and TIMEOUT we try IP geo before giving up.
         if (err.code === err.PERMISSION_DENIED) {
+          setLoading(false);
           setError(
             "Location permission denied. Enable it in your browser settings to use MedPrice."
           );
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          setError("Could not determine your location. Try again in a moment.");
+          return;
+        }
+        const ok = await fallbackToIpGeo();
+        setLoading(false);
+        if (ok) return; // fallback succeeded — clear the error
+        if (err.code === err.POSITION_UNAVAILABLE) {
+          setError(
+            "Could not determine your location. Try picking it manually below."
+          );
         } else {
-          setError("Location request timed out. Please try again.");
+          setError(
+            "Location request timed out. Try picking it manually below."
+          );
         }
       },
       { enableHighAccuracy: false, timeout: 12000, maximumAge: 60_000 }
     );
-  }, []);
+  }, [fallbackToIpGeo]);
 
   const clear = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
