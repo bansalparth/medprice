@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { MapPin, ChevronDown } from "lucide-react";
 import { useLocation } from "@/lib/location-context";
 import { ThemeToggle } from "./ThemeToggle";
@@ -13,20 +12,8 @@ export function Header() {
     <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-primary)]/80 border-b border-[var(--border)]">
       <div className="max-w-6xl mx-auto px-4 md:px-6 py-4 flex items-center justify-between gap-3">
         <Link href="/" className="flex items-center group shrink-0">
-          {/* Wordmark contains the icon, "MEDPRICE", the heartbeat trace, and
-              the tagline already — so this single image replaces the old
-              icon box + the "MedPrice" text node. Dark chip matches the
-              wordmark's near-black background; rounded corners hide the
-              hard edge against the translucent header. */}
-          <div className="rounded-lg bg-[#06040d] flex items-center px-2.5 py-1 overflow-hidden group-hover:scale-105 transition-transform shadow-lg shadow-black/30">
-            <Image
-              src="/logo-wordmark.png"
-              alt="MedPrice — your medicines, best price"
-              width={711}
-              height={332}
-              priority
-              className="h-7 w-auto"
-            />
+          <div className="font-display font-bold text-lg tracking-tight group-hover:scale-105 transition-transform">
+            Med<span className="gradient-text">Price</span>
           </div>
         </Link>
 
